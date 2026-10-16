@@ -317,7 +317,7 @@ def _check_drift(feats, profiles):
         d = (profiles.get(c.name) or {}).get("drift")
         if not d:
             continue
-        high_card = c.n_unique > 50 and c.kind in ("categorical", "text")
+        high_card = d.get("level_basis") == "unseen"
         if not high_card and d.get("level") == "shift" and c.kind != "datetime":
             shifted.append((c.name, d.get("psi") or 0))
         if c.kind != "text" and d.get("unseen_rate") is not None and d["unseen_rate"] > 0.01:

@@ -83,7 +83,14 @@ def profile_column(name: str, kind: str, discrete: bool,
                    with_power: bool = True) -> dict:
     """화면 한 장에 필요한 모든 것. y는 train과 같은 길이의 인코딩된 타깃."""
     out: dict = {"name": name, "kind": kind, "discrete": discrete}
-    as_cat = kind in ("categorical", "binary", "text", "id", "constant") or (kind == "numeric" and discrete)
+    if kind == "text":
+        # 문장은 값 자체를 비교하면 의미가 없어서 '글자 수'로 분포·차이·타깃 관계를 본다.
+        out["basis"] = "length"
+        tr = tr.astype("string").str.len().astype("float64") if tr is not None else None
+        te = te.astype("string").str.len().astype("float64") if te is not None else None
+        kind = "numeric"
+        discrete = False
+    as_cat = kind in ("categorical", "binary", "id", "constant") or (kind == "numeric" and discrete)
 
     if kind == "datetime":
         from ..schema import to_datetime_safe
@@ -243,11 +250,17 @@ def _categorical_drift(tr, te) -> dict | None:
     te_nn = te.dropna()
     unseen_mask = ~te_nn.isin(seen)
     p = psi(pa, pb)
+    unseen_rate = float(unseen_mask.sum() / max(len(te), 1))
+    level, basis = drift_level(p), "psi"
+    if len(keys) > 50:
+        # 고유값이 아주 많으면 PSI가 표본 잡음으로 부풀어서, test에 처음 보는 값의 비율로 판정한다.
+        level = "shift" if unseen_rate >= 0.3 else "watch" if unseen_rate >= 0.05 else "stable"
+        basis = "unseen"
     return {
-        "psi": p, "level": drift_level(p),
+        "psi": p, "level": level, "level_basis": basis,
         "missing_train": float(tr.isna().mean()), "missing_test": float(te.isna().mean()),
         "unseen_categories": int(te_nn[unseen_mask].nunique()),
-        "unseen_rate": float(unseen_mask.sum() / max(len(te), 1)),
+        "unseen_rate": unseen_rate,
         "train_only_categories": int(len(seen - set(te_nn.unique().tolist()))),
     }
 

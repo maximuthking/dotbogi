@@ -53,7 +53,7 @@ def _routes(app: App):
         ("POST", "/api/lbnoise"): lambda q, b: app.lb_noise(b),
         ("POST", "/api/ensemble"): lambda q, b: app.ensemble(b),
         ("POST", "/api/ensemble/save"): lambda q, b: app.ensemble_save(b),
-        ("POST", "/api/submission/check"): lambda q, b: app.submission_check(b.get("path", "")),
+        ("POST", "/api/submission/check"): lambda q, b: app.submission_check(b.get("path", ""), b.get("exp")),
         ("POST", "/api/submission/fix"): lambda q, b: app.submission_fix(b.get("path", ""), b.get("out") or None),
         ("POST", "/api/submission/compare"): lambda q, b: app.submission_compare(b.get("a", ""), b.get("b", "")),
         ("GET", "/api/correlation"): lambda q, b: app.correlation(q1(q, "method", "spearman")),
@@ -145,8 +145,9 @@ class Handler(BaseHTTPRequestHandler):
                 name = f"{exp}_{f.name}"
             else:
                 f = Path((query.get("path") or [""])[0])
-                allowed = self.app.project is not None and (
-                    f.resolve().is_relative_to(self.app.project.root))
+                proj = self.app.project
+                allowed = proj is not None and (f.resolve().is_relative_to(proj.root)
+                                                or f.resolve().is_relative_to(proj.dir.resolve()))
                 if not allowed or not f.is_file():
                     raise LoadError("받을 수 있는 파일이 아닙니다.")
                 name = f.name

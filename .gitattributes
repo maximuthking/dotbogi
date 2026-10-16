@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.min.js -text
+*.png binary
+*.ico binary

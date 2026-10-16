@@ -87,7 +87,7 @@ class Project:
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise LoadError(f"폴더가 없습니다: {self.root}")
-        self.dir = self.root / STORE
+        self.dir = _pick_store(self.root)
         self.lock = threading.RLock()
         self.settings = self._load_settings()
         self.train: pd.DataFrame | None = None
@@ -165,6 +165,7 @@ class Project:
                 if c.name in self.settings["kinds"]:
                     c.kind = self.settings["kinds"][c.name]
             self.guess = guess_competition(self.train, self.test, self.sample, self.columns)
+            self.apply_custom_metric()
             s = self.settings
             if not s["target"] or any(t not in self.train.columns for t in s["target"]):
                 s["target"] = list(self.guess.target)
@@ -184,6 +185,27 @@ class Project:
             self.cache.clear()
             self.loaded_at = time.time()
             self.save_settings()
+
+    def apply_custom_metric(self) -> str | None:
+        """설정에 사용자 지표 파일이 있으면 등록한다. 실패하면 이유를 돌려주고 기본 지표로 돌아간다."""
+        from . import metrics as M
+        cm = self.settings.get("custom_metric")
+        self.cache.pop("custom_metric_error", None)
+        if not cm or not cm.get("path"):
+            M.unregister_custom()
+            if self.settings.get("metric") == M.CUSTOM_KEY:
+                self.settings["metric"] = None
+            return None
+        try:
+            M.register_custom(str(self.resolve(cm["path"])), self.settings.get("task") or "regression",
+                              bool(cm.get("higher_is_better", True)), cm.get("needs") or "proba", cm.get("label"))
+            return None
+        except ValueError as e:
+            M.unregister_custom()
+            if self.settings.get("metric") == M.CUSTOM_KEY:
+                self.settings["metric"] = None
+            self.cache["custom_metric_error"] = str(e)
+            return str(e)
 
     @property
     def loaded(self) -> bool:
@@ -247,6 +269,24 @@ class Project:
         if len(df) != len(self.train):
             return None
         return df["fold"].to_numpy(dtype=np.int64)
+
+
+def _pick_store(root: Path) -> Path:
+    """대회 폴더에 쓸 수 있으면 <폴더>/.dotbogi, 읽기 전용(캐글 입력 폴더 등)이면 사용자 홈 아래."""
+    import hashlib
+    d = root / STORE
+    try:
+        d.mkdir(exist_ok=True)
+        probe = d / ".write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return d
+    except OSError:
+        home = Path(os.environ.get("DOTBOGI_HOME", Path.home() / ".dotbogi"))
+        h = hashlib.sha1(str(root).encode()).hexdigest()[:10]
+        alt = home / "projects" / f"{root.name}-{h}"
+        alt.mkdir(parents=True, exist_ok=True)
+        return alt
 
 
 def _align_proba_classes(y: pd.Series, sub_cols: list) -> list:

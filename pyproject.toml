@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dotbogi"
+dynamic = ["version"]
+description = "돋보기: 캐글·데이콘 정형 데이터 대회용 로컬 분석 도구 (데이터 점검, train/test 비교, 검증 설계, CV·LB 실험 대장, OOF 앙상블, 제출 검사)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MAXIMUTH" }]
+keywords = ["kaggle", "dacon", "eda", "adversarial validation", "cross validation", "data science", "competition"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: Korean",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "scikit-learn>=1.3",
+  "pyarrow>=12",
+]
+
+[project.optional-dependencies]
+lightgbm = ["lightgbm>=4.0"]
+excel = ["openpyxl>=3.1"]
+all = ["lightgbm>=4.0", "openpyxl>=3.1"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+dotbogi = "dotbogi.cli:main"
+
+[tool.setuptools]
+packages = ["dotbogi", "dotbogi.analysis"]
+
+[tool.setuptools.dynamic]
+version = { attr = "dotbogi.__version__" }
+
+[tool.setuptools.package-data]
+dotbogi = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/js/pages/*.js", "static/vendor/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

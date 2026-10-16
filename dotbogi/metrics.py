@@ -97,6 +97,22 @@ def _smape(y, p):
     return float(np.mean(2 * np.abs(y[m] - p[m]) / d[m])) if m.any() else 0.0
 
 
+def _brier(y, p):
+    return float(np.mean((np.asarray(p, float) - y) ** 2))
+
+
+def _ece(y, p, n_bins: int = 10):
+    """Expected Calibration Error: 확률 구간별 |평균 예측 - 실제 비율|의 가중 평균."""
+    p = np.clip(np.asarray(p, float), 0, 1)
+    bins = np.minimum((p * n_bins).astype(int), n_bins - 1)
+    total = 0.0
+    for b in range(n_bins):
+        m = bins == b
+        if m.any():
+            total += m.mean() * abs(y[m].mean() - p[m].mean())
+    return float(total)
+
+
 def _r2(y, p):
     sst = np.sum((y - y.mean()) ** 2)
     return float(1 - np.sum((y - p) ** 2) / sst) if sst > 0 else float("nan")
@@ -109,6 +125,8 @@ METRICS: dict[str, Metric] = {m.key: m for m in [
            lambda y, p: float(np.mean(_labels(p, "binary") == y)), "0.5 기준으로 라벨을 정합니다"),
     Metric("f1", "F1", ("binary",), True, "label", _f1_bin, "0.5 기준으로 라벨을 정합니다"),
     Metric("ap", "PR AUC (AP)", ("binary",), True, "proba", _ap),
+    Metric("brier", "Brier Score", ("binary",), False, "proba", _brier),
+    Metric("ece", "ECE (보정 오차)", ("binary",), False, "proba", _ece, "확률 10구간 기준"),
     Metric("mlogloss", "Log Loss", ("multiclass",), False, "proba", _logloss_multi),
     Metric("macc", "Accuracy", ("multiclass",), True, "label",
            lambda y, P: float(np.mean(_labels(P, "multiclass") == y))),
@@ -138,6 +156,40 @@ def default_metric(task: str, sample=None, target: str | None = None, submission
         if sample is not None and target in getattr(sample, "columns", []):
             return "macro_f1"
     return DEFAULT_METRIC.get(task, "rmse")
+
+
+CUSTOM_KEY = "custom"
+
+
+def register_custom(path: str, task: str, higher_is_better: bool = True, needs: str = "proba",
+                    label: str | None = None) -> Metric:
+    """대회 전용 평가식(파이썬 파일의 score(y_true, y_pred) 함수)을 'custom' 지표로 등록한다.
+    y_true: 이진 0/1, 다중 0..K-1 코드, 회귀 값. y_pred: 이진 양성 확률, 다중 (행, K) 확률, 회귀 값."""
+    import importlib.util
+    from pathlib import Path
+    pth = Path(path)
+    if not pth.is_file():
+        raise ValueError(f"지표 파일이 없습니다: {path}")
+    spec = importlib.util.spec_from_file_location(f"dotbogi_custom_metric_{abs(hash(str(pth)))}", pth)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        raise ValueError(f"지표 파일을 실행하다 오류가 났습니다: {type(e).__name__}: {e}") from e
+    fn = getattr(mod, "score", None)
+    if not callable(fn):
+        raise ValueError("지표 파일에 score(y_true, y_pred) 함수가 없습니다.")
+    if needs not in ("proba", "label", "value"):
+        needs = "value" if task == "regression" else "proba"
+    m = Metric(CUSTOM_KEY, label or getattr(mod, "NAME", None) or f"사용자 지표 ({pth.name})", (task,),
+               bool(getattr(mod, "HIGHER_IS_BETTER", higher_is_better)), needs,
+               lambda y, p: float(fn(y, p)), f"{pth.name}의 score 함수")
+    METRICS[CUSTOM_KEY] = m
+    return m
+
+
+def unregister_custom() -> None:
+    METRICS.pop(CUSTOM_KEY, None)
 
 
 def metrics_for(task: str) -> list[dict]:

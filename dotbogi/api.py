@@ -67,6 +67,8 @@ class App:
                            for k, df in (("train", p.train), ("test", p.test), ("sample_submission", p.sample))},
                 "columns": [c.to_dict() for c in p.columns],
                 "has_folds": p.folds_path().exists(),
+                "store": str(p.dir),
+                "custom_metric_error": p.cache.get("custom_metric_error"),
             }
         return out
 
@@ -202,6 +204,7 @@ class App:
             if s["submission_format"] == "proba_columns" and s["task"] != "multiclass":
                 s["submission_format"] = "value"
             s["metric"] = M.default_metric(s["task"], p.sample, t, s["submission_format"])
+            p.apply_custom_metric()
             heavy = True
         if "metric" in patch:
             if patch["metric"] not in M.METRICS:
@@ -240,6 +243,26 @@ class App:
             if comp.get("public_share") not in (None, ""):
                 ps = float(comp["public_share"])
                 comp["public_share"] = ps / 100 if ps > 1 else ps
+        if "custom_metric" in patch:
+            cm = patch["custom_metric"]
+            if cm and cm.get("path"):
+                path = str(cm["path"]).strip()
+                if not Path(path).is_absolute():
+                    path = str(p.root / path)
+                s["custom_metric"] = {"path": p.rel(path), "higher_is_better": bool(cm.get("higher_is_better", True)),
+                                      "needs": cm.get("needs") or "proba", "label": (cm.get("label") or "").strip() or None}
+                err = p.apply_custom_metric()
+                if err:
+                    s["custom_metric"] = None
+                    p.apply_custom_metric()
+                    p.save_settings()
+                    raise LoadError(err)
+                s["metric"] = M.CUSTOM_KEY
+            else:
+                s["custom_metric"] = None
+                p.apply_custom_metric()
+                if not s.get("metric"):
+                    s["metric"] = M.default_metric(s["task"], p.sample, p.target_col(), s["submission_format"])
         if "name" in patch and patch["name"]:
             s["name"] = str(patch["name"])[:80]
         if heavy:
@@ -302,7 +325,7 @@ class App:
         parts = [file_signature(p.resolve(s["files"][k])) if s["files"].get(k) else "-"
                  for k in ("train", "test")]
         parts += [json.dumps(s["target"]), s["task"] or "", json.dumps(s["classes"], default=str),
-                  json.dumps(s["kinds"], sort_keys=True), s["submission_format"], "v3"]
+                  json.dumps(s["kinds"], sort_keys=True), s["submission_format"], "v4"]
         return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
 
     def profiles_status(self) -> dict:
@@ -900,8 +923,7 @@ class App:
             raise LoadError(f"Kaggle CLI 오류: {msg[0][:300]}{hint}")
         lines = out.splitlines()
         start = next((i for i, ln in enumerate(lines) if "," in ln and "date" in ln.lower()), 0)
-        df = pd.read_csv(StringIO("
-".join(lines[start:])))
+        df = pd.read_csv(StringIO(chr(10).join(lines[start:])))
         cols = {c.lower().replace("_", ""): c for c in df.columns}
 
         def col(*names):
@@ -964,10 +986,12 @@ class App:
         return {"job": job.to_dict(False)}
 
     # ═════════════════════════════════════════ 제출 파일
-    def submission_check(self, path: str) -> dict:
+    def submission_check(self, path: str, exp: str | None = None) -> dict:
         p = self.require()
         s = p.settings
-        if not Path(path).exists():
+        if exp:
+            path = str(self.experiment_file(exp, "submission"))
+        if not path or not Path(path).exists():
             raise LoadError(f"파일이 없습니다: {path}")
         sub = _read_sub(path)
         t = p.target_col()
@@ -994,6 +1018,8 @@ class App:
         t = p.target_col()
         fixed, done = fix_submission(sub, p.sample, s["id_col"], s["task"], s["submission_format"],
                                      p.train[t] if t else None)
+        if _encoding_item(path):
+            done.append("UTF-8(BOM 없음)로 다시 저장")
         if not done:
             return {"ok": True, "done": [], "path": None}
         src = Path(path)
