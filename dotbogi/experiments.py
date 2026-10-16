@@ -99,7 +99,7 @@ class Ledger:
 
     def update(self, exp_id: str, **fields) -> dict:
         allowed = {"name", "cv", "cv_std", "lb_public", "lb_private", "notes", "tags", "final", "submitted_at",
-                   "metric", "params"}
+                   "metric", "params", "kaggle_key"}
         with _LOCK:
             exps = self.load()
             for e in exps:
