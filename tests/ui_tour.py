@@ -47,7 +47,7 @@ def settle(pg, ms=400):
     """작업 진행 표시와 로딩이 사라질 때까지 기다린다."""
     pg.wait_for_timeout(ms)
     for _ in range(600):
-        busy = pg.evaluate("document.querySelectorAll('.sb-job, .loading, .btn.busy').length")
+        busy = pg.evaluate("document.querySelectorAll('.job-pill, .loading, .btn.busy').length")
         if not busy:
             break
         pg.wait_for_timeout(250)

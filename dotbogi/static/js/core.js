@@ -11,6 +11,10 @@
   D.logo = () => { const t = document.createElement("template"); t.innerHTML = LOGO; return t.content.firstChild; };
 
   const ICONS = {
+    chevrons: '<path d="M17 17l-5-5 5-5"/><path d="M11 17l-5-5 5-5"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    table: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M10 10v9"/>',
+    clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
     panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9 4.5v15"/>',
     lens: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5.5 5.5"/><path d="M8 10.5h5M10.5 8v5"/>',
     home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/>',
@@ -256,17 +260,17 @@
   };
 
   function renderJobs() {
-    const slot = document.getElementById("sb-jobs");
+    const slot = document.getElementById("tb-jobs");
     if (!slot) return;
     D.clear(slot);
     const jobs = [...running.values()].map((r) => r.job);
     if (!jobs.length) return;
     const job = jobs[0];
     const pct = Math.round((job.progress || 0) * 100);
-    slot.appendChild(h("span", { class: "sb-job", title: (job.label || "") + " · " + (job.message || "") },
+    slot.appendChild(h("span", { class: "job-pill", title: (job.label || "") + " · " + (job.message || "") },
       h("span", { class: "spinner sm" }), h("b", null, job.label || "작업 중"),
-      h("span", { class: "sb-msg" }, job.message || ""),
-      h("span", { class: "sb-bar" }, h("span", { style: { width: Math.max(3, pct) + "%" } })),
+      h("span", { class: "job-msg" }, job.message || ""),
+      h("span", { class: "job-bar" }, h("span", { style: { width: Math.max(3, pct) + "%" } })),
       h("span", { class: "num" }, pct + "%"),
       jobs.length > 1 ? h("span", { class: "faint" }, ` 외 ${jobs.length - 1}개`) : null));
   }
@@ -469,18 +473,44 @@
   ];
   D.navBadges = {};
 
+  const navIcon = (name) => { for (const g of NAV) for (const it of g.items) if (it[0] === name) return it[2]; return "file"; };
+  const navLabel = (name) => { for (const g of NAV) for (const it of g.items) if (it[0] === name) return it[1]; return ""; };
+  const daysLeft = (proj) => {
+    const comp = (proj && proj.settings.competition) || {};
+    if (!comp.end_date) return null;
+    return Math.ceil((new Date(comp.end_date + "T23:59:59") - new Date()) / 86400000);
+  };
+
+  /* 사이드바: 맨 위 작업공간(로고·대회), 메뉴, 맨 아래 데이터 정보·테마 */
   function renderSidebar() {
     const sb = document.getElementById("sidebar");
     if (!sb) return;
     D.clear(sb);
     const proj = D.project();
     const cur = D.route.name;
+    const dark = document.documentElement.dataset.theme === "dark";
+    const loaded = proj && proj.loaded;
+
+    const wsName = D.STATIC ? (D.STATIC.project || "보고서") : loaded ? (proj.settings.name || proj.root) : "돋보기";
+    const wsMeta = D.STATIC ? "읽기 전용 보고서" : loaded
+      ? (D.TASK_LABEL[proj.settings.task] || "과제 미정") + ", " + ((proj.metric_info && proj.metric_info.label) || proj.settings.metric || "지표 미정")
+      : "대회 데이터 분석";
+    sb.appendChild(h("div", { class: "ws" },
+      h("div", { class: "ws-main", role: "button", title: loaded ? proj.root : "시작 화면", onclick: () => D.go(loaded ? "settings" : "home") },
+        h("span", { class: "brand-mark" }, D.logo()),
+        h("div", { class: "ws-text" }, h("div", { class: "ws-name" }, wsName), h("div", { class: "ws-meta" }, wsMeta))),
+      h("button", { class: "icon-btn ws-collapse", title: "사이드바 닫기 (Ctrl+B)", onclick: toggleNav }, D.icon("chevrons"))));
+
+    if (!D.STATIC) {
+      sb.appendChild(h("div", { class: "nav-item", role: "button", title: "대회 폴더 열기 (Ctrl+O)", onclick: openFolder },
+        D.icon("folder"), h("span", null, "폴더 열기"), h("kbd", { class: "nav-kbd" }, "Ctrl+O")));
+    }
+
     let n = 0;
     for (const g of NAV) {
       if (g.group) sb.appendChild(h("div", { class: "nav-group" }, g.group));
       for (const [name, label, icon] of g.items) {
-        const needsProject = name !== "home";
-        const disabled = needsProject && !(proj && proj.loaded);
+        const disabled = name !== "home" && !loaded;
         if (D.STATIC && !(D.STATIC.pages || []).includes(name)) continue;
         const badge = D.navBadges[name];
         const key = ++n <= 10 ? (n % 10) : null;
@@ -490,73 +520,53 @@
           badge ? h("span", { class: "nav-badge " + badge.kind }, badge.text) : null));
       }
     }
-    if (proj && proj.loaded && proj.settings.competition && proj.settings.competition.end_date) {
-      const end = new Date(proj.settings.competition.end_date + "T23:59:59");
-      const days = Math.ceil((end - new Date()) / 86400000);
-      sb.appendChild(h("div", { class: "dday" }, days >= 0 ? ["대회 마감까지 ", h("b", null, "D-" + days)] : "대회가 끝났습니다"));
-    }
-  }
 
-  /* 제목 표시줄: 로고, 지금 연 대회, 폴더 열기·탐색 접기·테마 */
-  function renderTitlebar() {
-    const tb = document.getElementById("titlebar");
-    if (!tb) return;
-    D.clear(tb);
-    const proj = D.project();
-    const dark = document.documentElement.dataset.theme === "dark";
-    tb.appendChild(h("div", { class: "tb-brand", onclick: () => D.go("home"), title: "시작 화면" },
-      h("span", { class: "brand-mark" }, D.logo()), h("span", { class: "brand-name" }, "돋보기")));
-    if (proj && proj.loaded) {
-      const s = proj.settings;
-      tb.appendChild(h("span", { class: "tb-sep" }, "/"));
-      tb.appendChild(h("span", { class: "tb-project", title: proj.root, onclick: () => D.go("settings") },
-        h("b", null, s.name || proj.root),
-        h("span", { class: "tb-meta" }, (D.TASK_LABEL[s.task] || "과제 미정") + ", " + ((proj.metric_info && proj.metric_info.label) || s.metric || "지표 미정"))));
-    } else if (D.STATIC) {
-      tb.appendChild(h("span", { class: "tb-sep" }, "/"));
-      tb.appendChild(h("span", { class: "tb-project" }, h("b", null, D.STATIC.project || "보고서"), h("span", { class: "tb-meta" }, "보고서")));
-    }
-    tb.appendChild(h("span", { class: "grow" }));
-    if (!D.STATIC) tb.appendChild(h("button", { class: "tb-btn", title: "대회 폴더 열기 (Ctrl+O)", onclick: openFolder }, D.icon("folder"), h("span", null, "폴더 열기")));
-    tb.appendChild(h("button", { class: "tb-btn icon", title: "탐색 창 접기·펴기 (Ctrl+B)", onclick: toggleNav }, D.icon("panel")));
-    tb.appendChild(h("button", { class: "tb-btn icon", title: dark ? "밝은 테마로" : "어두운 테마로", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon")));
-  }
-
-  /* 상태 표시줄: 폴더, 데이터 크기, 진행 중 작업, 모델 엔진·버전 */
-  function renderStatusbar() {
-    const sb = document.getElementById("statusbar");
-    if (!sb) return;
-    D.clear(sb);
-    const proj = D.project();
-    const left = h("div", { class: "sb-left" });
-    if (D.STATIC) {
-      left.appendChild(h("span", null, `읽기 전용 보고서 · ${D.STATIC.created_at || ""} 기준`));
-    } else if (proj && proj.loaded) {
+    const foot = h("div", { class: "side-foot" });
+    if (loaded && !D.STATIC) {
       const sh = proj.shapes || {};
-      left.appendChild(h("span", { class: "sb-path", title: proj.root, onclick: () => D.go("settings") }, D.icon("folder"), proj.root));
-      if (sh.train) left.appendChild(h("span", { class: "num" }, `train ${D.fmt.int(sh.train[0])}×${sh.train[1]}`));
-      if (sh.test) left.appendChild(h("span", { class: "num" }, `test ${D.fmt.int(sh.test[0])}×${sh.test[1]}`));
-      const comp = proj.settings.competition || {};
-      if (comp.end_date) {
-        const days = Math.ceil((new Date(comp.end_date + "T23:59:59") - new Date()) / 86400000);
-        left.appendChild(h("span", { class: days >= 0 && days <= 3 ? "sb-hot" : "" }, days >= 0 ? `마감 D-${days}` : "대회 끝남"));
-      }
-    } else {
-      left.appendChild(h("span", { class: "faint" }, "대회 폴더를 열지 않았습니다"));
+      foot.appendChild(h("div", { class: "side-info", title: proj.root, role: "button", onclick: () => D.go("settings") },
+        D.icon("folder"), h("span", { class: "ellipsis" }, proj.root)));
+      const sizes = [];
+      if (sh.train) sizes.push(`train ${D.fmt.int(sh.train[0])}×${sh.train[1]}`);
+      if (sh.test) sizes.push(`test ${D.fmt.int(sh.test[0])}×${sh.test[1]}`);
+      if (sizes.length) foot.appendChild(h("div", { class: "side-info num" }, D.icon("table"), h("span", null, sizes.join(", "))));
+      const d = daysLeft(proj);
+      if (d !== null) foot.appendChild(h("div", { class: "side-info" + (d >= 0 && d <= 3 ? " hot" : "") }, D.icon("clock"),
+        h("span", null, d >= 0 ? `마감까지 D-${d}` : "대회가 끝났습니다")));
+    } else if (D.STATIC) {
+      foot.appendChild(h("div", { class: "side-info" }, D.icon("clock"), h("span", null, `${D.STATIC.created_at || ""} 기준`)));
     }
-    sb.appendChild(left);
-    sb.appendChild(h("div", { class: "sb-jobs", id: "sb-jobs" }));
-    sb.appendChild(h("div", { class: "sb-right" },
-      D.state ? h("span", { title: D.state.lightgbm ? "" : "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" },
-        "모델 " + (D.state.lightgbm ? "LightGBM" : "scikit-learn")) : null,
-      D.state ? h("span", null, "v" + D.state.version) : null));
+    foot.appendChild(h("div", { class: "side-bottom" },
+      h("span", { class: "side-ver", title: D.state && !D.state.lightgbm ? "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" : "" },
+        D.state ? `v${D.state.version}, ${D.state.lightgbm ? "LightGBM" : "scikit-learn"}` : ""),
+      h("button", { class: "icon-btn", title: dark ? "밝은 테마로" : "어두운 테마로", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon"))));
+    sb.appendChild(foot);
+  }
+
+  /* 위쪽 줄: 사이드바 열기, 브레드크럼(대회 / 화면), 진행 중 작업 */
+  function renderTopbar(page, name) {
+    const top = document.getElementById("topbar");
+    if (!top) return;
+    D.clear(top);
+    const proj = D.project();
+    top.appendChild(h("button", { class: "icon-btn open-nav", title: "사이드바 열기 (Ctrl+B)", onclick: toggleNav }, D.icon("menu")));
+    const crumbs = h("nav", { class: "crumbs", "aria-label": "위치" });
+    const projName = D.STATIC ? (D.STATIC.project || "보고서") : proj && proj.loaded ? (proj.settings.name || proj.root) : null;
+    if (projName && name !== "home") {
+      crumbs.appendChild(h("span", { class: "crumb", role: "button", onclick: () => D.go(D.STATIC ? "overview" : "settings") },
+        h("span", { class: "crumb-logo" }, D.logo()), h("span", { class: "ellipsis" }, projName)));
+      crumbs.appendChild(h("span", { class: "crumb-sep" }, "/"));
+    }
+    crumbs.appendChild(h("span", { class: "crumb now" }, D.icon(navIcon(name)), h("span", null, page.title || navLabel(name))));
+    top.appendChild(crumbs);
+    if (D.STATIC) top.appendChild(h("span", { class: "badge" }, "읽기 전용"));
+    top.appendChild(h("span", { class: "grow" }));
+    top.appendChild(h("div", { class: "tb-jobs", id: "tb-jobs" }));
     renderJobs();
   }
 
   function renderChrome() {
-    renderTitlebar();
     renderSidebar();
-    renderStatusbar();
   }
   D.renderSidebar = renderChrome;
 
@@ -624,15 +634,17 @@
     if (D.STATIC && (name === "home" || !(D.STATIC.pages || []).includes(name))) name = "overview";
     const page = D.pages[name] || D.pages.home;
     renderChrome();
+    renderTopbar(page, name);
     document.title = (page.title ? page.title + " - " : "") + "돋보기";
-    const top = document.getElementById("topbar");
     const body = document.getElementById("content");
-    D.clear(top); D.clear(body);
-    top.appendChild(h("h1", null, page.title));
-    if (page.subtitle) top.appendChild(h("span", { class: "sub" }, typeof page.subtitle === "function" ? page.subtitle() : page.subtitle));
-    top.appendChild(h("span", { class: "spacer" }));
-    const actions = h("div", { class: "row" });
-    top.appendChild(actions);
+    D.clear(body);
+    const actions = h("div", { class: "row page-actions" });
+    const sub = page.subtitle ? (typeof page.subtitle === "function" ? page.subtitle() : page.subtitle) : null;
+    body.appendChild(h("header", { class: "page-head" },
+      h("div", { class: "page-icon" + (page.logoIcon ? " logo" : "") }, page.logoIcon ? D.logo() : D.icon(navIcon(name))),
+      h("div", { class: "page-title-row" },
+        h("div", { class: "grow" }, h("h1", { class: "page-title" }, page.headTitle || page.title), sub ? h("p", { class: "page-sub" }, sub) : null),
+        actions)));
     const root = h("div", { class: "page" });
     body.appendChild(root);
     body.scrollTop = 0;
