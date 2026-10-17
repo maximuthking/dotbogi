@@ -2,3 +2,4 @@
 *.min.js -text
 *.png binary
 *.ico binary
+*.bat text eol=crlf
