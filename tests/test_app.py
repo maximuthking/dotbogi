@@ -216,6 +216,13 @@ def test_script_api(planted_dir):
     assert r["ok"]
 
 
+def test_report_function(planted_dir, tmp_path):
+    out = tmp_path / "r.html"
+    res = dotbogi.report(str(planted_dir), str(out), adversarial=True, show=False)
+    html = out.read_text(encoding="utf-8")
+    assert res["bytes"] == out.stat().st_size and '"/api/adversarial":{"ready":true' in html.replace(" ", "")
+
+
 def test_kaggle_import_with_fake_cli(planted_dir, tmp_path, monkeypatch):
     app = open_app(planted_dir)
     e = app.ledger().add("lgbm_v1", "auc", 0.81)

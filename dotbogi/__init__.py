@@ -7,7 +7,7 @@ from __future__ import annotations
 
 __version__ = "1.0.0"
 
-__all__ = ["__version__", "log", "folds", "serve", "check_submission_file"]
+__all__ = ["__version__", "log", "folds", "serve", "check_submission_file", "report"]
 
 
 def _load_project(project: str):
@@ -91,3 +91,32 @@ def check_submission_file(project: str, path: str) -> dict:
     app = App()
     app.project = _load_project(project)
     return app.submission_check(path)
+
+
+def report(project: str, path: str | None = None, adversarial: bool = False, show: bool = True) -> dict:
+    """HTML 보고서를 만든다. 주피터·캐글·코랩 노트북이면 셀 안에 바로 띄운다.
+
+    project: 대회 폴더 (읽기 전용이어도 됨: 기록은 사용자 홈 아래에 저장)
+    path:    보고서 파일 경로 (생략하면 기록 폴더 안 report-날짜.html)
+    adversarial: True면 적대적 검증도 실행해서 넣는다
+    """
+    import html as _html
+    from pathlib import Path as _Path
+
+    from .api import App
+    from .report import build_report
+
+    app = App()
+    app.project = _load_project(project)
+    res = build_report(app, _Path(path) if path else None, None, run_adversarial=adversarial)
+    if show:
+        try:
+            from IPython import get_ipython
+            from IPython.display import HTML, display
+            if get_ipython() is not None:
+                doc = _Path(res["path"]).read_text(encoding="utf-8")
+                display(HTML('<iframe srcdoc="' + _html.escape(doc, quote=True) + '" style="width:100%;height:860px;'
+                             'border:1px solid #d0d5dd;border-radius:8px"></iframe>'))
+        except ImportError:
+            pass
+    return res
