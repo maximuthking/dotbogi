@@ -34,11 +34,15 @@ dependencies = [
 [project.optional-dependencies]
 lightgbm = ["lightgbm>=4.0"]
 excel = ["openpyxl>=3.1"]
-all = ["lightgbm>=4.0", "openpyxl>=3.1"]
+desktop = ["pywebview>=5.0"]
+all = ["lightgbm>=4.0", "openpyxl>=3.1", "pywebview>=5.0"]
 dev = ["pytest>=7"]
 
 [project.scripts]
 dotbogi = "dotbogi.cli:main"
+
+[project.gui-scripts]
+dotbogi-app = "dotbogi.desktop:run"
 
 [tool.setuptools]
 packages = ["dotbogi", "dotbogi.analysis"]

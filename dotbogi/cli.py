@@ -105,6 +105,16 @@ def cmd_sub_check(args) -> int:
     return 0 if r["ok"] else 1
 
 
+def _launch(a):
+    """화면 열기: 기본은 돋보기 자체 창, --browser는 브라우저, --no-browser는 서버만."""
+    from . import desktop
+    if not a.no_browser and not a.browser and desktop.available():
+        desktop.main(a.folder, port=a.port)
+        return
+    from .server import serve
+    serve(a.folder, port=a.port, open_browser=not a.no_browser, app_window=not a.browser)
+
+
 def cmd_shortcut(args) -> int:
     """바탕화면에 돋보기 아이콘 바로가기를 만든다 (Windows). 콘솔 창 없이 뜨고, 창을 닫으면 끝난다."""
     if sys.platform != "win32":
@@ -115,7 +125,7 @@ def cmd_shortcut(args) -> int:
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe")
     target = pyw if pyw.exists() else exe
-    arg = "-m dotbogi" + (f' "{Path(args.folder).resolve()}"' if args.folder else "")
+    arg = "-m dotbogi.desktop" + (f' "{Path(args.folder).resolve()}"' if args.folder else "")
     if args.output:
         lnk = Path(args.output)
     else:
@@ -156,13 +166,12 @@ def main(argv: list[str] | None = None) -> int:
         ap.add_argument("folder", nargs="?", help="열 대회 폴더 (생략하면 시작 화면)")
         ap.add_argument("--port", type=int, default=8765, help="포트 (기본 8765, 쓰는 중이면 다음 번호)")
         ap.add_argument("--no-browser", action="store_true", help="화면을 자동으로 열지 않기")
-        ap.add_argument("--browser", action="store_true", help="독립 창 대신 기본 브라우저 탭으로 열기")
+        ap.add_argument("--browser", action="store_true", help="돋보기 창 대신 브라우저로 열기")
         a = ap.parse_args(argv)
         if a.folder and not Path(a.folder).is_dir():
             print(f"폴더가 없습니다: {a.folder}", file=sys.stderr)
             return 1
-        from .server import serve
-        serve(a.folder, port=a.port, open_browser=not a.no_browser, app_window=not a.browser)
+        _launch(a)
         return 0
 
     ap = argparse.ArgumentParser(prog="dotbogi")
@@ -198,8 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_report(a)
         if a.cmd == "shortcut":
             return cmd_shortcut(a)
-        from .server import serve
-        serve(a.folder, port=a.port, open_browser=not a.no_browser, app_window=not a.browser)
+        _launch(a)
         return 0
     except LoadError as e:
         print(f"오류: {e}", file=sys.stderr)

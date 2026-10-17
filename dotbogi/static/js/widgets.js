@@ -6,6 +6,11 @@
 
   /* 폴더/파일 고르기 창. mode: "folder" | "file". 고르면 경로를, 닫으면 null을 돌려준다. */
   D.browse = function ({ mode = "folder", start = "", title } = {}) {
+    const dk = D.desktop && D.desktop();
+    if (dk) {  // 데스크톱 앱: 운영체제 기본 열기 창
+      return Promise.resolve(mode === "file" ? dk.pick_file(start || "") : dk.pick_folder(start || ""))
+        .then((p) => p || null, (e) => { D.fail(e); return null; });
+    }
     return new Promise((resolve) => {
       let picked = false;
       const pathInput = h("input", { class: "input grow", value: start || "", placeholder: "경로를 입력하고 Enter" });

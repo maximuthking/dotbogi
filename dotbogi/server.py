@@ -65,7 +65,14 @@ def _routes(app: App):
         ("POST", "/api/kaggle/import"): lambda q, b: app.kaggle_import(b),
         ("POST", "/api/report"): lambda q, b: app.report(b),
         ("GET", "/api/job"): lambda q, b: _job(app, q1(q, "id", "")),
+        ("GET", "/api/download/resolve"): lambda q, b: _resolve(app, q1(q, "exp", ""), q1(q, "kind", "submission"), q1(q, "path", "")),
     }
+
+
+def _resolve(app: App, exp: str, kind: str, path: str):
+    """데스크톱 앱의 '다른 이름으로 저장': 내려받을 파일의 실제 위치와 이름."""
+    f, name = resolve_download(app, exp, kind, path)
+    return {"path": str(f), "name": name, "root": str(app.project.root) if app.project else ""}
 
 
 def _job(app: App, job_id: str):
@@ -141,19 +148,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _download(self, query):
         try:
-            exp = (query.get("exp") or [""])[0]
-            kind = (query.get("kind") or ["submission"])[0]
-            if exp:
-                f = self.app.experiment_file(exp, kind)
-                name = f"{exp}_{f.name}"
-            else:
-                f = Path((query.get("path") or [""])[0])
-                proj = self.app.project
-                allowed = proj is not None and (f.resolve().is_relative_to(proj.root)
-                                                or f.resolve().is_relative_to(proj.dir.resolve()))
-                if not allowed or not f.is_file():
-                    raise LoadError("받을 수 있는 파일이 아닙니다.")
-                name = f.name
+            f, name = resolve_download(self.app, (query.get("exp") or [""])[0],
+                                       (query.get("kind") or ["submission"])[0], (query.get("path") or [""])[0])
         except LoadError as e:
             return self._json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
         data = f.read_bytes()
@@ -199,6 +195,20 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
+
+
+def resolve_download(app: App, exp: str = "", kind: str = "submission", path: str = "") -> tuple[Path, str]:
+    """내려받을 파일과 저장 이름. 실험 파일이거나, 지금 연 대회 폴더 안의 파일만 허용한다."""
+    if exp:
+        f = app.experiment_file(exp, kind)
+        return f, f"{exp}_{f.name}"
+    f = Path(path)
+    proj = app.project
+    allowed = bool(path) and proj is not None and (f.resolve().is_relative_to(proj.root)
+                                                   or f.resolve().is_relative_to(proj.dir.resolve()))
+    if not allowed or not f.is_file():
+        raise LoadError("받을 수 있는 파일이 아닙니다.")
+    return f, f.name
 
 
 def _free_port(start: int) -> int:

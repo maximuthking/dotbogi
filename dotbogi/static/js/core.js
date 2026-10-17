@@ -562,8 +562,56 @@
     if (D.STATIC) top.appendChild(h("span", { class: "badge" }, "읽기 전용"));
     top.appendChild(h("span", { class: "grow" }));
     top.appendChild(h("div", { class: "tb-jobs", id: "tb-jobs" }));
+    top.appendChild(h("div", { class: "win-ctl", id: "win-ctl" }));
     renderJobs();
+    renderWinCtl();
   }
+
+  /* 데스크톱 앱 창 버튼 (제목 표시줄을 없앴을 때): 최소화 · 최대화/복원 · 닫기 */
+  let frameless = false;
+  const GLYPH = { min: "\uE921", max: "\uE922", restore: "\uE923", close: "\uE8BB" };
+  function renderWinCtl() {
+    const box = document.getElementById("win-ctl");
+    if (!box) return;
+    D.clear(box);
+    const dk = D.desktop();
+    if (!dk || !frameless) return;
+    const max = document.body.classList.contains("maximized");
+    box.appendChild(h("button", { class: "wc", title: "최소화", "aria-label": "최소화", onclick: () => dk.minimize() }, GLYPH.min));
+    box.appendChild(h("button", { class: "wc", title: max ? "이전 크기로" : "최대화", "aria-label": max ? "이전 크기로" : "최대화", onclick: toggleMax },
+      max ? GLYPH.restore : GLYPH.max));
+    box.appendChild(h("button", { class: "wc close", title: "닫기", "aria-label": "닫기", onclick: () => dk.close() }, GLYPH.close));
+  }
+  async function syncMax() {
+    const dk = D.desktop();
+    if (!dk || !frameless) return;
+    const m = await dk.is_maximized();
+    if (m !== document.body.classList.contains("maximized")) { document.body.classList.toggle("maximized", !!m); renderWinCtl(); }
+  }
+  async function toggleMax() {
+    const dk = D.desktop();
+    if (!dk) return;
+    document.body.classList.toggle("maximized", !!(await dk.toggle_maximize()));
+    renderWinCtl();
+  }
+  // 위쪽 줄 빈 곳: 끌면 창 이동(Windows 기본 이동이라 화면 가장자리 스냅도 됨), 두 번 누르면 최대화
+  let lastDown = { t: 0, x: 0, y: 0 };
+  document.addEventListener("mousedown", (e) => {
+    const dk = D.desktop();
+    if (!dk || !frameless || e.button !== 0) return;
+    const t = e.target;
+    if (!t.closest || !t.closest(".topbar") || t.closest("button, a, input, select, [role='button'], .job-pill")) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - lastDown.t < 450 && Math.abs(e.screenX - lastDown.x) < 5 && Math.abs(e.screenY - lastDown.y) < 5) {
+      lastDown = { t: 0, x: 0, y: 0 };
+      toggleMax();
+      return;
+    }
+    lastDown = { t: now, x: e.screenX, y: e.screenY };
+    dk.start_drag();
+  });
+  window.addEventListener("resize", () => { clearTimeout(syncMax.t); syncMax.t = setTimeout(syncMax, 120); });
 
   function renderChrome() {
     renderSidebar();
@@ -636,6 +684,7 @@
     renderChrome();
     renderTopbar(page, name);
     document.title = (page.title ? page.title + " - " : "") + "돋보기";
+    syncTitle();
     const body = document.getElementById("content");
     D.clear(body);
     const actions = h("div", { class: "row page-actions" });
@@ -658,6 +707,31 @@
     }
   };
   D.isCurrent = (seq) => seq === renderSeq;
+
+  /* 데스크톱 앱(자기 창) 연결: pywebview가 넣어 주는 window.pywebview.api */
+  D.desktop = () => (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder ? window.pywebview.api : null);
+  function syncTitle() { const dk = D.desktop(); if (dk) Promise.resolve(dk.set_title(document.title)).catch(() => {}); }
+  window.addEventListener("pywebviewready", async () => {
+    document.body.classList.add("desktop");
+    syncTitle();
+    try { frameless = !!(await D.desktop().frameless()); } catch (e) { frameless = false; }
+    document.body.classList.toggle("frameless", frameless);
+    syncMax();
+    renderWinCtl();
+  });
+  // 내려받기 링크: 앱 창에서는 '다른 이름으로 저장' 창으로
+  document.addEventListener("click", async (e) => {
+    const a = e.target.closest ? e.target.closest('a[href*="/api/download"]') : null;
+    const dk = D.desktop();
+    if (!a || !dk) return;
+    e.preventDefault();
+    const u = new URL(a.getAttribute("href"), location.href);
+    try {
+      const r = await dk.save_download(u.searchParams.get("exp") || "", u.searchParams.get("kind") || "submission", u.searchParams.get("path") || "");
+      if (r && r.error) D.toast(r.error, "error");
+      else if (r && r.path) D.toast("저장했습니다: " + r.path);
+    } catch (err) { D.fail(err); }
+  });
 
   window.addEventListener("hashchange", () => D.render());
 

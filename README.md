@@ -35,14 +35,27 @@
 
 ## 설치
 
+### 데스크톱 앱 (Windows, 파이썬 필요 없음)
+
+`Dotbogi-Setup-1.0.0.exe`를 실행하면 설치됩니다. 관리자 권한 없이 사용자 폴더에 설치되고, 시작 메뉴에 **돋보기**가 생깁니다.
+제거는 Windows 설정의 '앱'에서 합니다. 대회 폴더의 `.dotbogi` 기록은 지우지 않습니다.
+
+설치 파일은 직접 만들 수 있습니다 (Inno Setup 6 필요: `winget install JRSoftware.InnoSetup`).
+
+```bash
+pip install -e .[all] pyinstaller
+python packaging/build.py          # dist/Dotbogi/Dotbogi.exe 와 dist/Dotbogi-Setup-1.0.0.exe
+```
+
+빌드는 묶은 exe가 LightGBM·scikit-learn·parquet를 제대로 쓰는지 스스로 점검한 뒤에 설치 파일을 만듭니다 (`Dotbogi.exe --selftest`).
+
+### 파이썬 패키지
+
 Python 3.10 이상이 필요합니다.
 
 ```bash
-# 이 폴더에서
-pip install -e .[lightgbm]
-# 또는 설치 파일로
-pip install dist/dotbogi-1.0.0-py3-none-any.whl
-pip install lightgbm        # 선택: 있으면 더 빠르고 중요도가 정확합니다
+pip install -e .[all]       # LightGBM, 엑셀, 데스크톱 창(pywebview)까지
+pip install -e .            # 최소 설치: pandas, numpy, scipy, scikit-learn, pyarrow
 ```
 
 필수 의존성은 pandas, numpy, scipy, scikit-learn, pyarrow뿐입니다. 캐글·코랩 노트북에는 모두 기본으로 들어 있습니다.
@@ -55,17 +68,18 @@ dotbogi C:\Projects\Dacon\대회이름        # 바로 그 대회를 열기
 python -m dotbogi                        # dotbogi 명령이 없을 때
 ```
 
-주소창 없는 독립 창(데스크톱 앱 창)으로 열립니다. 설치된 Edge나 Chrome의 앱 창 기능을 쓰고, 돋보기 전용 프로필을 따로 씁니다. **창을 닫으면 돋보기도 끝납니다.**
-Edge·Chrome이 없으면 기본 브라우저 탭으로 열고, 이때는 터미널에서 Ctrl+C로 끝냅니다.
+돋보기 자체 창으로 열립니다 (pywebview가 있을 때, Windows는 내장 WebView2). 창은 노션 데스크톱 앱처럼 제목 표시줄 없이
+위쪽 줄을 끌어서 옮기고, 두 번 누르면 최대화합니다. 폴더 고르기와 파일 저장은 Windows 기본 창을 씁니다.
+**창을 닫으면 돋보기도 끝납니다.** 창과 분석 엔진은 서로 다른 프로세스라 무거운 분석 중에도 창이 멈추지 않습니다.
 
 ```bash
-dotbogi --browser                        # 독립 창 대신 기본 브라우저 탭으로
+dotbogi --browser                        # 자체 창 대신 브라우저로 (Edge/Chrome 앱 창, 없으면 기본 브라우저 탭)
 dotbogi --no-browser                     # 서버만 켜기 (주소: http://127.0.0.1:8765/)
-dotbogi shortcut                         # 바탕화면에 돋보기 아이콘 바로가기 만들기 (Windows)
+dotbogi shortcut                         # 바탕화면에 돋보기 아이콘 바로가기 만들기 (파이썬 설치판)
 dotbogi shortcut C:\Projects\Dacon\대회이름  # 그 대회를 바로 여는 바로가기
 ```
 
-바로가기는 콘솔 창 없이 앱만 띄웁니다. 윈도우에서는 `run_dotbogi.bat`을 두 번 눌러도 됩니다.
+pywebview가 없으면 예전처럼 Edge/Chrome 앱 창이나 기본 브라우저 탭으로 엽니다. 윈도우에서는 `run_dotbogi.bat`을 두 번 눌러도 됩니다.
 
 화면은 노션처럼 생겼습니다. 왼쪽 사이드바 맨 위에 지금 연 대회가, 아래에 폴더·데이터 크기·마감일과 테마 버튼이 있습니다. 위쪽 줄에는 현재 위치(대회 / 화면)와 진행 중인 작업이 나옵니다.
 

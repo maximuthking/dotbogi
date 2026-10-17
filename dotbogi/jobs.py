@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import sys
 import time
 import traceback
 import uuid
@@ -74,6 +75,7 @@ class JobManager:
                 job.error = f"예상하지 못한 오류: {type(e).__name__}: {e}"
                 job.detail = traceback.format_exc()
                 job.state = "error"
+                print(f"[작업 오류] {job.label}", job.detail, sep="\n", file=sys.stderr, flush=True)
             finally:
                 job.finished = time.time()
 
