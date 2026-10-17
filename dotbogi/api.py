@@ -419,7 +419,8 @@ class App:
         # 값 예시
         ex = []
         if c and c.in_train:
-            ex = [as_label(v) for v in p.train[name].dropna().head(400).drop_duplicates().head(8).tolist()]
+            vals = p.train[name].dropna().head(400).drop_duplicates().head(8).tolist()
+            ex = [(f"{v:.6g}" if isinstance(v, float) else as_label(v)) for v in vals]
         out["examples"] = ex
         return out
 
@@ -446,19 +447,21 @@ class App:
 
     # ═════════════════════════════════════════ 적대적 검증
     def adversarial(self, exclude: list[str] | None = None, rerun: bool = False) -> dict:
+        """exclude가 None이면 마지막 결과 조회, 목록이면 그 컬럼을 빼고 실행(같은 조건 결과가 있으면 재사용)."""
         p = self.require()
         if p.test is None:
             raise LoadError("test 파일이 있어야 train과 test를 비교할 수 있습니다.")
-        key = "adv:" + ",".join(sorted(exclude or []))
-        if key in p.cache and not rerun:
-            return {"ready": True, "result": p.cache[key], "exclude": exclude or []}
-        if exclude is None and not rerun:
-            # 아직 안 돌렸으면 결과 없음을 알려 준다 (버튼으로 시작)
+        if exclude is None:
             last = p.cache.get("adv:last")
             if last and last in p.cache:
                 return {"ready": True, "result": p.cache[last], "exclude": p.cache.get("adv:last_ex", [])}
             return {"ready": False, "job": None}
-        job = self.jobs.submit("adversarial", "적대적 검증", self._adv_job, p, list(exclude or []), key)
+        exclude = sorted(set(exclude))
+        key = "adv:" + ",".join(exclude)
+        if key in p.cache and not rerun:
+            p.cache["adv:last"], p.cache["adv:last_ex"] = key, exclude
+            return {"ready": True, "result": p.cache[key], "exclude": exclude}
+        job = self.jobs.submit("adversarial", "적대적 검증", self._adv_job, p, exclude, key)
         return {"ready": False, "job": job.to_dict(False)}
 
     def _adv_job(self, job, p: Project, exclude: list[str], key: str):
@@ -700,7 +703,8 @@ class App:
             pred = df[pick].to_numpy(dtype="float64")
         how = "행 순서"
         key_col = id_col if id_col and id_col in df.columns else ("id" if "id" in df.columns else None)
-        if key_col and id_col and id_col in p.train.columns:
+        id_unique = bool(id_col and id_col in p.train.columns and p.train[id_col].is_unique)
+        if key_col and id_unique and not ("row" in df.columns and not df[key_col].is_unique):
             k_tr = p.train[id_col].astype("string").to_numpy()
             k_df = df[key_col].astype("string").to_numpy()
             pos = pd.Series(np.arange(len(k_df)), index=k_df)

@@ -11,6 +11,18 @@ def _item(level, title, detail="", fixable=False):
     return {"level": level, "title": title, "detail": detail, "fixable": fixable}
 
 
+def _near_names(missing: list, extra: list) -> dict:
+    """대소문자·앞뒤 공백·BOM만 다른 컬럼 이름 짝 {제출 이름: 필요한 이름}"""
+    norm = lambda x: str(x).replace("﻿", "").strip().lower()
+    out = {}
+    for m in missing:
+        for e in extra:
+            if e not in out and norm(e) == norm(m):
+                out[e] = m
+                break
+    return out
+
+
 def _key(s: pd.Series) -> pd.Series:
     """ID 비교용 문자열 (1.0과 1을 같게)."""
     if pd.api.types.is_float_dtype(s):
@@ -36,13 +48,20 @@ def check_submission(sub: pd.DataFrame, sample: pd.DataFrame | None, id_col: str
         got = [c for c in sub.columns if c not in unnamed]
         missing = [c for c in exp_cols if c not in got]
         extra = [c for c in got if c not in exp_cols]
+        renames = _near_names(missing, extra)
+        if renames:
+            items.append(_item("danger", "컬럼 이름이 대소문자·공백만 다릅니다",
+                               ", ".join(f"'{a}' → '{b}'" for a, b in renames.items()) +
+                               ". 채점 서버는 다른 컬럼으로 봅니다.", fixable=True))
+            missing = [c for c in missing if c not in renames.values()]
+            extra = [c for c in extra if c not in renames]
         if missing:
             items.append(_item("danger", f"필요한 컬럼이 없습니다: {missing}",
                                "컬럼 이름은 대소문자·공백까지 sample_submission과 같아야 합니다."))
         if extra:
             items.append(_item("warn", f"sample_submission에 없는 컬럼이 있습니다: {extra}",
                                "대부분의 대회에서 오류가 나거나 무시됩니다.", fixable=True))
-        if not missing and [c for c in got if c in exp_cols] != exp_cols:
+        if not missing and not renames and [c for c in got if c in exp_cols] != exp_cols:
             items.append(_item("warn", "컬럼 순서가 sample_submission과 다릅니다",
                                "이름으로 읽는 대회가 많지만 순서로 읽는 곳도 있어 맞춰 두는 게 안전합니다.", fixable=True))
         if len(sub) != len(sample):
@@ -108,35 +127,49 @@ def check_submission(sub: pd.DataFrame, sample: pd.DataFrame | None, id_col: str
             items.append(_item("danger", f"'{c}'는 숫자여야 하는데 문자가 들어 있습니다"))
 
     needs = M.METRICS[metric].needs if metric in M.METRICS else None
+    mlabel = M.METRICS[metric].label if metric in M.METRICS else ""
     if task == "binary" and pred_cols:
         c = pred_cols[0]
         st = stats.get(c)
+        sample_col = sample[c] if sample is not None and c in sample.columns else None
+        # 라벨을 내야 하는가: 지표가 라벨을 쓰거나, 제출 양식이 정수/문자 라벨이고 지표가 확률 지표가 아닐 때
+        expects_label = needs == "label" or (
+            needs != "proba" and sample_col is not None and not pd.api.types.is_float_dtype(sample_col))
+        allowed = set(map(str, classes)) if classes else None
         if st:
-            if st["min"] < 0 or st["max"] > 1:
-                if needs == "proba" or (sample is not None and pd.api.types.is_float_dtype(sample[c])):
+            out_of_range = st["min"] < 0 or st["max"] > 1
+            label_like = st["n_unique"] <= 2
+            if expects_label:
+                if not label_like:
+                    strict = sample_col is not None and pd.api.types.is_integer_dtype(sample_col)
+                    items.append(_item("danger" if strict else "warn",
+                                       "라벨(0/1)을 내야 하는데 확률이나 연속값을 냈습니다",
+                                       (f"평가 지표가 {mlabel}이고 " if mlabel else "") +
+                                       "제출 양식이 라벨입니다. (pred >= 0.5).astype(int)처럼 라벨로 바꿔서 내세요."))
+                elif allowed:
+                    bad = set(_key(sub[c].dropna()).unique()) - allowed
+                    if bad:
+                        items.append(_item("danger", f"허용되지 않는 라벨이 있습니다: {sorted(bad)[:5]}",
+                                           f"허용 값: {sorted(allowed)}"))
+            else:
+                if out_of_range:
                     items.append(_item("danger", f"'{c}' 확률이 0~1 범위를 벗어났습니다 "
                                                  f"({st['min']:.3g} ~ {st['max']:.3g})", fixable=True))
-            elif st["n_unique"] <= 2 and needs == "proba":
-                items.append(_item("warn", "확률 대신 0/1 라벨을 낸 것 같습니다",
-                                   f"평가 지표가 {M.METRICS[metric].label}이면 확률을 내야 점수가 훨씬 좋습니다."))
-            elif needs == "label" and st["n_unique"] > 2:
-                items.append(_item("warn", "라벨(0/1) 대신 확률을 낸 것 같습니다",
-                                   f"평가 지표가 {M.METRICS[metric].label}이면 0/1로 바꿔야 할 수 있습니다. "
-                                   "대회 안내를 확인하세요."))
-            if y_train is not None and st and 0 <= st["min"] and st["max"] <= 1:
+                elif label_like and needs == "proba":
+                    items.append(_item("warn", "확률 대신 0/1 라벨을 낸 것 같습니다",
+                                       f"평가 지표가 {mlabel}이면 확률을 내야 점수가 훨씬 좋습니다."))
+            if y_train is not None and 0 <= st["min"] and st["max"] <= 1 and not (expects_label and not label_like):
                 pos = float(pd.to_numeric(y_train.astype("string").map({str(classes[1]): 1, str(classes[0]): 0})
                                           if classes and len(classes) == 2 else y_train, errors="coerce").mean())
                 if np.isfinite(pos) and abs(st["mean"] - pos) > 0.15:
                     items.append(_item("warn", "예측 평균이 train 양성 비율과 많이 다릅니다",
                                        f"예측 평균 {st['mean']:.3f}, train 양성 비율 {pos:.3f}. "
                                        "클래스를 반대로 넣었는지(1-p) 확인하세요."))
-    if task == "binary" and pred_cols and classes and not stats.get(pred_cols[0]):
-        allowed = set(map(str, classes))
-        got = set(sub[pred_cols[0]].dropna().astype(str).unique())
-        bad = got - allowed
-        if bad:
-            items.append(_item("danger", f"허용되지 않는 라벨이 있습니다: {sorted(bad)[:5]}",
-                               f"허용 값: {sorted(allowed)}"))
+        elif allowed and sub[c].notna().any():
+            bad = set(sub[c].dropna().astype(str).str.strip().unique()) - allowed
+            if bad:
+                items.append(_item("danger", f"허용되지 않는 라벨이 있습니다: {sorted(bad)[:5]}",
+                                   f"허용 값: {sorted(allowed)}"))
     if task == "multiclass" and submission_format == "proba_columns" and len(pred_cols) > 1:
         P = sub[pred_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")
         rs = np.nansum(P, axis=1)
@@ -188,6 +221,11 @@ def fix_submission(sub: pd.DataFrame, sample: pd.DataFrame, id_col: str | None, 
     if unnamed:
         sub = sub.drop(columns=unnamed)
         done.append("인덱스 컬럼 삭제")
+    renames = _near_names([c for c in sample.columns if c not in sub.columns],
+                          [c for c in sub.columns if c not in sample.columns])
+    if renames:
+        sub = sub.rename(columns=renames)
+        done.append("컬럼 이름을 sample_submission에 맞춤 (" + ", ".join(f"{a}→{b}" for a, b in renames.items()) + ")")
     cols = [c for c in sample.columns if c in sub.columns]
     if list(sub.columns) != cols:
         sub = sub[cols]

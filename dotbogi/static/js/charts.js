@@ -53,6 +53,18 @@
       if (!chart.isDisposed()) chart.dispose();
     }
   };
+  /* el 안에 있는 차트만 정리 (같은 화면의 다른 차트는 그대로) */
+  C.disposeIn = function (el) {
+    for (let i = instances.length - 1; i >= 0; i--) {
+      const { chart, ro } = instances[i];
+      const dom = chart.getDom && chart.getDom();
+      if (dom && el.contains(dom)) {
+        ro.disconnect();
+        if (!chart.isDisposed()) chart.dispose();
+        instances.splice(i, 1);
+      }
+    }
+  };
   C.el = (cls = "chart") => D.h("div", { class: cls });
 
   function binLabels(edges, isDate) {
@@ -109,7 +121,12 @@
       if (g.label_type === "missing") return "(결측)";
       return String(g.label);
     });
-    const short = labels.map((s) => (s.length > 16 ? s.slice(0, 15) + "…" : s));
+    // 축에는 구간 시작값만, 전체 구간은 툴팁에
+    const short = tg.groups.map((g, i) => {
+      if (g.label_type === "range") return (tg.datetime ? f.day(g.label[0]) : f.num(g.label[0], 3)) + "~";
+      const s = labels[i];
+      return s.length > 14 ? s.slice(0, 13) + "…" : s;
+    });
     o.xAxis = axis(p, { type: "category", data: short, axisLabel: { color: p.muted, fontSize: 11, rotate: labels.length > 6 ? 30 : 0, hideOverlap: true } });
     o.grid.bottom = labels.length > 6 ? 80 : 40;
     o.grid.right = 54;

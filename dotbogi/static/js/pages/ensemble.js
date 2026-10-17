@@ -52,7 +52,7 @@
         if (ctx.isCurrent()) show(res);
       }
       function show(res) {
-        D.charts.disposeAll();
+        D.charts.disposeIn(out);
         D.clear(out);
         const better = (a, b) => (hib ? a > b : a < b);
         const honest = res.honest;
@@ -82,8 +82,8 @@
             }) }, "실험으로 저장"))));
         setTimeout(() => {
           D.charts.barH(wEl, res.weights.filter((w) => w.weight > 0).map((w) => ({ name: w.name, value: w.weight })), { left: 150, fmt: (v) => f.pct(v, 1), axisFmt: (v) => f.pct(v, 0), valueLabel: "가중치" });
-          if (res.history && res.history.length) D.charts.line(hEl, res.history, { xName: "단계" });
-          else hEl.appendChild(D.empty("단순 평균은 단계가 없습니다", null));
+          if (res.history && res.history.length > 1) D.charts.line(hEl, res.history, { xName: "단계" });
+          else hEl.appendChild(D.empty(res.method === "mean" ? "단순 평균은 단계가 없습니다" : "가장 좋은 모델 하나에 더해서 점수가 오르는 모델이 없었습니다", null));
           D.charts.heatmap(cEl, res.correlation.names, res.correlation.matrix, { min: Math.min(0.5, ...res.correlation.matrix.flat()), max: 1, colors: ["#f2f3f5", "#9fbdf2", "#2f6fdf"] });
         }, 0);
       }

@@ -39,7 +39,7 @@ def run_checks(train: pd.DataFrame, test: pd.DataFrame | None, sample_sub: pd.Da
     items += _check_overlap(train, test, feats, target, task)
     step(0.4, "컬럼 구성 확인")
     items += _check_column_sets(train, test, target, id_col)
-    items += _check_sample_sub(test, sample_sub, id_col)
+    items += _check_sample_sub(test, sample_sub, id_col, train)
     step(0.5, "결측·상수 컬럼 확인")
     items += _check_missing_constant(train, test, feats)
     items += _check_dirty_values(train, test, feats)
@@ -140,8 +140,15 @@ def _check_column_sets(train, test, target, id_col):
     return out
 
 
-def _check_sample_sub(test, sample_sub, id_col):
+def _check_sample_sub(test, sample_sub, id_col, train=None):
     out = []
+    for name, df in (("train", train), ("test", test)):
+        if df is not None and id_col and id_col in df.columns:
+            dup = int(df[id_col].duplicated().sum())
+            if dup:
+                out.append(_item(f"dup_id_{name}", "warn", f"{name}에 같은 ID가 {dup:,}번 반복됩니다",
+                                 f"'{id_col}'이 행마다 고유하지 않습니다. 제출·OOF를 ID로 맞출 때 엉킬 수 있어 "
+                                 "돋보기는 이런 경우 행 순서로 맞춥니다. ID 컬럼이 맞는지 확인하세요.", columns=[id_col]))
     if sample_sub is None or test is None:
         return out
     if len(sample_sub) != len(test):

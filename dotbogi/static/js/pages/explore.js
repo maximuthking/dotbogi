@@ -56,7 +56,7 @@
     const seg = D.seg([["spearman", "스피어만 (순위)"], ["pearson", "피어슨 (선형)"]], method, (v) => { method = v; load(); });
     body.appendChild(D.card("숫자 컬럼 상관 행렬", { hint: "예측력 상위 30개, 3만 행 표본", actions: D.STATIC ? null : seg }, out));
     async function load() {
-      D.charts.disposeAll();
+      D.charts.disposeIn(out);
       D.clear(out).appendChild(D.loading());
       try {
         const r = D.STATIC ? await D.api("/api/correlation") : await D.api("/api/correlation", { params: { method } });
@@ -98,7 +98,7 @@
       h("div", { class: "mt12" }, out)));
     async function draw() {
       D.setParams({ tab: "chart", x, y, color, which });
-      D.charts.disposeAll();
+      D.charts.disposeIn(out);
       D.clear(out).appendChild(D.loading());
       try {
         const r = await D.api("/api/explore", { body: { x, y, color, which } });

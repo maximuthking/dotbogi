@@ -90,7 +90,7 @@
         const r = await D.api("/api/adversarial", { body: { exclude } });
         await D.runJob(r.job);
         const res = await D.api("/api/adversarial");
-        if (ctx.isCurrent()) { D.charts.disposeAll(); await renderAdv(res); renderDriftTable(); }
+        if (ctx.isCurrent()) { D.charts.disposeIn(advCard); await renderAdv(res); renderDriftTable(); }
       }
 
       let cols = null;
@@ -114,7 +114,7 @@
           ],
           rows, compact: true, sort: { key: "psi", asc: false }, maxHeight: "520px", onRow: (r) => D.go("columns", { name: r.name }),
           empty: D.empty("비교할 컬럼이 없습니다", null),
-        }), h("div", { class: "tiny muted mt8" }, "PSI(Population Stability Index): 0.1 미만은 안정, 0.1~0.25는 조금 다름, 0.25 이상은 많이 다름으로 봅니다. 결측 비율 차이도 포함해 계산합니다.")));
+        }), h("div", { class: "tiny muted mt8" }, "PSI(Population Stability Index): 0.1 미만은 안정, 0.1~0.25는 조금 다름, 0.25 이상은 많이 다름으로 봅니다. 결측 비율 차이도 포함해 계산합니다. 고유값이 50개 넘는 범주는 PSI가 잡음으로 부풀어서, test 행 중 처음 보는 값의 비율(5% 이상 조금 다름, 30% 이상 많이 다름)로 판정합니다.")));
       }
 
       advCard.appendChild(h("div", { class: "card-b" }, D.loading()));

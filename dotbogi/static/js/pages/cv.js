@@ -46,7 +46,13 @@
       const strat = D.seg(Object.entries(info.strategies), form.strategy, (v) => { form.strategy = v; toggle(); });
       const nIn = h("input", { class: "input", type: "number", min: "2", max: "20", value: form.n_splits, onchange: (e) => (form.n_splits = Number(e.target.value)) });
       const seedIn = h("input", { class: "input", type: "number", value: form.seed, onchange: (e) => (form.seed = Number(e.target.value)) });
-      const makeBtn = h("button", { class: "btn primary", onclick: () => D.busy(makeBtn, () => makeFolds(form)) }, "폴드 만들기");
+      const makeBtn = h("button", { class: "btn primary", onclick: () => D.busy(makeBtn, () => {
+        form.n_splits = Number(nIn.value);
+        form.seed = Number(seedIn.value);
+        if (!Number.isInteger(form.n_splits) || form.n_splits < 2 || form.n_splits > 20) throw new Error("폴드 수는 2~20 사이 정수로 적으세요.");
+        if (!Number.isInteger(form.seed)) throw new Error("시드는 정수로 적으세요.");
+        return makeFolds(form);
+      }) }, "폴드 만들기");
       root.appendChild(h("div", { class: "card needs-server" }, h("div", { class: "card-h" }, h("h3", null, "직접 정하기")),
         h("div", { class: "card-b col" }, strat,
           h("div", { class: "grid g4", style: { gap: "12px" } },
@@ -116,6 +122,8 @@
     const nameIn = h("input", { class: "input", placeholder: "비우면 자동 이름" });
     const runBtn = h("button", { class: "btn primary", onclick: () => D.busy(runBtn, run) }, D.icon("play"), "교차검증 실행");
     async function run() {
+      lr = Number(String(lrIn.value).replace(",", "."));
+      if (!(lr > 0 && lr <= 1)) throw new Error("학습률은 0보다 크고 1 이하인 숫자로 적으세요.");
       const r = await D.api("/api/baseline", { body: { engine, learning_rate: lr, exclude, name: nameIn.value.trim() || undefined } });
       const res = await D.runJob(r.job);
       await D.refreshState();
@@ -123,7 +131,7 @@
       D.toast("기본 모델 결과를 실험 대장에 기록했습니다.");
     }
     function showResult(res) {
-      D.charts.disposeAll();
+      D.charts.disposeIn(out);
       D.clear(out);
       const e = res.experiment;
       const impEl = D.charts.el("chart");

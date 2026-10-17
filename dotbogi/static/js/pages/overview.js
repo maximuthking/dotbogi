@@ -113,7 +113,7 @@
       info.append(`평균 ${f.num(t.mean)} · 중앙값 ${f.num(t.median)} · 표준편차 ${f.num(t.std)} · 범위 ${f.num(t.min)} ~ ${f.num(t.max)} · 왜도 ${f.num(t.skew, 3)}`,
         t.missing ? ` · 비어 있는 행 ${f.int(t.missing)}개` : "");
     }
-    const actions = t.log_hist ? D.seg([["raw", "원래 값"], ["log", "log1p"]], "raw", (v) => { log = v === "log"; D.charts.disposeAll(); D.clear(el); D.charts.targetDist(el, t, log); }) : null;
+    const actions = t.log_hist ? D.seg([["raw", "원래 값"], ["log", "log1p"]], "raw", (v) => { log = v === "log"; D.charts.disposeIn(el.parentNode); D.clear(el); D.charts.targetDist(el, t, log); }) : null;
     const card = D.card("타깃 분포 · " + t.name, { actions }, info, el);
     setTimeout(() => D.charts.targetDist(el, t, log), 0);
     return card;

@@ -65,7 +65,7 @@
       let detailSeq = 0;
       async function showDetail(name) {
         const seq = ++detailSeq;
-        D.charts.disposeAll();
+        D.charts.disposeIn(detail);
         D.clear(detail).appendChild(D.card(null, null, D.loading()));
         try {
           const c = await D.api("/api/column", { params: { name } });

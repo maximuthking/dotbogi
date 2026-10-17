@@ -147,6 +147,7 @@
     const btn = h("button", { class: "btn primary", onclick: () => D.busy(btn, run) }, "계산");
     async function run() {
       const r = await D.api("/api/lbnoise", { body: { id: a, id_b: b || undefined } });
+      D.charts.disposeIn(out);
       D.clear(out);
       if (!r.ok) { out.appendChild(D.callout("warn", "점수를 계산하지 못했습니다.")); return; }
       const ea = withOof.find((e) => e.id === a), eb = withOof.find((e) => e.id === b);
@@ -184,9 +185,13 @@
       h("dt", null, "출처"), h("dd", null, (SOURCE[e.source] || [e.source])[0]),
       h("dt", null, "ID"), h("dd", null, h("code", null, e.id))));
     if (e.notes) body.appendChild(h("div", { class: "callout info" }, D.icon("info"), h("div", null, e.notes)));
+    const PARAM = { engine: "모델 엔진", learning_rate: "학습률", n_features: "피처 수", strategy: "검증 방법", n_splits: "폴드 수",
+      excluded: "뺀 컬럼", mean_best_iteration: "평균 트리 수", use_rank: "순위로 섞기", method: "섞는 방법", in_sample_score: "같은 데이터로 잰 점수", model: "모델" };
+    const VAL = { sklearn: "HistGradientBoosting", lightgbm: "LightGBM", hill: "힐클라이밍", mean: "단순 평균", true: "예", false: "아니오", ...((D.state && D.state.strategies) || {}) };
+    const fmtV = (k, v) => (Array.isArray(v) ? (v.length ? v.join(", ") : "없음") : typeof v === "number" ? f.num(v, 6) : typeof v === "object" && v !== null ? JSON.stringify(v) : VAL[String(v)] || String(v));
     const params = Object.entries(e.params || {}).filter(([k]) => k !== "weights");
     if (params.length) body.appendChild(h("div", null, h("div", { class: "bold small" }, "설정"),
-      h("table", { class: "stats" }, h("tbody", null, params.map(([k, v]) => h("tr", null, h("td", null, k), h("td", { style: { textAlign: "left" } }, typeof v === "object" ? JSON.stringify(v) : String(v))))))));
+      h("table", { class: "stats" }, h("tbody", null, params.map(([k, v]) => h("tr", null, h("td", null, PARAM[k] || k), h("td", { style: { textAlign: "left" } }, fmtV(k, v))))))));
     if (e.params && e.params.weights) body.appendChild(h("div", null, h("div", { class: "bold small" }, "앙상블 가중치"),
       h("table", { class: "stats" }, h("tbody", null, e.params.weights.map((w) => h("tr", null, h("td", null, w.name), h("td", null, f.pct(w.weight, 1))))))));
     if (e.fold_scores && e.fold_scores.length) body.appendChild(h("div", null, h("div", { class: "bold small" }, "폴드별 점수"),
