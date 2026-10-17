@@ -69,6 +69,8 @@ class App:
                 "has_folds": p.folds_path().exists(),
                 "store": str(p.dir),
                 "custom_metric_error": p.cache.get("custom_metric_error"),
+                "notices": list(getattr(p, "notices", []) or []),
+                "load_error": getattr(p, "load_error", None),
             }
         return out
 
@@ -124,24 +126,35 @@ class App:
         drives = []
         if sys.platform == "win32":
             drives = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
-        found = find_data_files(pth, max_depth=2) if len(files) < 200 else {}
+        found = find_data_files(pth, max_depth=3) if len(files) < 200 else {}
         parent = str(pth.parent) if pth.parent != pth else None
         return {"path": str(pth), "parent": parent, "dirs": dirs[:500], "files": files[:500], "drives": drives,
-                "detected": {k: found.get(k) for k in ("train", "test", "sample_submission")}}
+                "detected": {k: found.get(k) for k in ("train", "test", "sample_submission")},
+                "ambiguous": found.get("ambiguous", [])}
 
     def open_project(self, path: str) -> dict:
         pth = Path(path).expanduser()
         if pth.is_file():
             pth = pth.parent
+        if not str(path).strip():
+            raise LoadError("폴더 경로를 적거나 '찾아보기'로 고르세요.")
         project = Project(pth)
-        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, project)
+        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, project, key=str(project.root))
         return {"job": job.to_dict(False)}
 
     def _load_job(self, job, project: Project):
-        project.load(progress=job.update)
+        try:
+            project.load(progress=job.update)
+        except Exception as e:
+            # 열지 못해도 이 폴더는 기억해 둔다 → 화면에서 파일을 직접 골라 다시 열 수 있게
+            project.load_error = str(e) if isinstance(e, (LoadError, ValueError)) else f"{type(e).__name__}: {e}"
+            if self.project is None or not self.project.loaded or self.project.root == project.root:
+                self.project = project
+            raise
+        project.load_error = None
         self.project = project
         self._remember(project)
-        return {"ok": True}
+        return {"ok": True, "notices": list(project.notices)}
 
     def set_files(self, files: dict) -> dict:
         p = self.project
@@ -162,14 +175,16 @@ class App:
         p.settings["kinds"] = {}
         p.settings["excluded"] = []
         p.settings["cv"] = None
-        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, p)
+        p.notices = []
+        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, p, key=str(p.root))
         return {"job": job.to_dict(False)}
 
     def reload(self) -> dict:
         p = self.project
         if p is None:
             raise LoadError("먼저 대회 폴더를 여세요.")
-        job = self.jobs.submit("load", "데이터 다시 불러오기", self._load_job, p)
+        p.notices = []
+        job = self.jobs.submit("load", "데이터 다시 불러오기", self._load_job, p, key=str(p.root))
         return {"job": job.to_dict(False)}
 
     # ═════════════════════════════════════════ 설정
@@ -249,12 +264,16 @@ class App:
                 path = str(cm["path"]).strip()
                 if not Path(path).is_absolute():
                     path = str(p.root / path)
+                prev_cm, prev_metric = s.get("custom_metric"), s.get("metric")
                 s["custom_metric"] = {"path": p.rel(path), "higher_is_better": bool(cm.get("higher_is_better", True)),
                                       "needs": cm.get("needs") or "proba", "label": (cm.get("label") or "").strip() or None}
                 err = p.apply_custom_metric()
                 if err:
-                    s["custom_metric"] = None
+                    s["custom_metric"], s["metric"] = prev_cm, prev_metric  # 이전 상태로 되돌림
                     p.apply_custom_metric()
+                    if s.get("metric") is None:
+                        s["metric"] = prev_metric if prev_metric in M.METRICS else M.default_metric(
+                            s["task"], p.sample, p.target_col(), s["submission_format"])
                     p.save_settings()
                     raise LoadError(err)
                 s["metric"] = M.CUSTOM_KEY
@@ -398,6 +417,7 @@ class App:
                 "n_unique": c.n_unique, "in_train": c.in_train, "in_test": c.in_test,
                 "missing_train": tr.get("missing_rate"), "missing_test": te.get("missing_rate"),
                 "psi": d.get("psi"), "drift": d.get("level"), "unseen_rate": d.get("unseen_rate"),
+                "drift_basis": d.get("level_basis", "psi"),
                 "power": pw.get("power"), "power_metric": pw.get("metric"), "power_value": pw.get("value"),
                 "role": pr.get("role", "feature"), "excluded": c.name in s["excluded"],
                 "kind_overridden": c.name in s["kinds"], "note": c.note,
@@ -439,13 +459,18 @@ class App:
         s = p.settings
         y, mask, classes = p.encoded_target()
         items = run_checks(p.train, p.test, p.sample, p.columns, s["target"], s["id_col"], s["task"],
-                           y, mask, p.cache.get("profiles"), progress=job.update)
+                           y, mask, p.cache.get("profiles"), progress=job.update, excluded=s.get("excluded"))
         rec = recommend(s["task"], items, len(p.train), y)
         counts = {lv: sum(1 for it in items if it["level"] == lv) for lv in ("danger", "warn", "info", "ok")}
         p.cache["checks"] = jsonable({"items": items, "counts": counts, "recommend": rec})
         return {"ok": True}
 
     # ═════════════════════════════════════════ 적대적 검증
+    def _adv_sig(self, p: Project) -> str:
+        st = p.settings
+        parts = [self._profile_key(p), json.dumps(st.get("excluded") or []), st.get("id_col") or ""]
+        return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
+
     def adversarial(self, exclude: list[str] | None = None, rerun: bool = False) -> dict:
         """exclude가 None이면 마지막 결과 조회, 목록이면 그 컬럼을 빼고 실행(같은 조건 결과가 있으면 재사용)."""
         p = self.require()
@@ -455,14 +480,30 @@ class App:
             last = p.cache.get("adv:last")
             if last and last in p.cache:
                 return {"ready": True, "result": p.cache[last], "exclude": p.cache.get("adv:last_ex", [])}
-            return {"ready": False, "job": None}
+            saved = self._adv_load(p)  # 프로그램을 다시 켜도 마지막 결과를 보여 준다
+            if saved:
+                return {"ready": True, "result": saved["result"], "exclude": saved["exclude"]}
+            job = self.jobs.get_running("adversarial")
+            return {"ready": False, "job": job.to_dict(False) if job else None}
         exclude = sorted(set(exclude))
         key = "adv:" + ",".join(exclude)
         if key in p.cache and not rerun:
             p.cache["adv:last"], p.cache["adv:last_ex"] = key, exclude
             return {"ready": True, "result": p.cache[key], "exclude": exclude}
-        job = self.jobs.submit("adversarial", "적대적 검증", self._adv_job, p, exclude, key)
+        job = self.jobs.submit("adversarial", "적대적 검증", self._adv_job, p, exclude, key, key=key)
         return {"ready": False, "job": job.to_dict(False)}
+
+    def _adv_load(self, p: Project):
+        f = p.dir / "cache" / "adversarial.json"
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if d.get("sig") != self._adv_sig(p):
+            return None
+        key = "adv:" + ",".join(d["exclude"])
+        p.cache[key], p.cache["adv:last"], p.cache["adv:last_ex"] = d["result"], key, d["exclude"]
+        return d
 
     def _adv_job(self, job, p: Project, exclude: list[str], key: str):
         cols = [c for c in p.feature_columns() if c.name not in set(exclude)]
@@ -483,6 +524,12 @@ class App:
         p.cache[key] = res
         p.cache["adv:last"] = key
         p.cache["adv:last_ex"] = exclude
+        try:
+            (p.dir / "cache").mkdir(parents=True, exist_ok=True)
+            (p.dir / "cache" / "adversarial.json").write_text(json.dumps(
+                {"sig": self._adv_sig(p), "exclude": exclude, "result": res}, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
         return {"ok": True}
 
     # ═════════════════════════════════════════ 검증 설계
@@ -502,6 +549,12 @@ class App:
         out["group_candidates"] = find_group_candidates(p.train, p.test, p.feature_columns())
         out["time_columns"] = [c.name for c in p.columns if c.kind == "datetime" and c.in_train]
         out["all_columns"] = [c.name for c in p.columns if c.in_train and c.name not in s["target"]]
+        n = len(p.train)
+        out["groupable_columns"] = [
+            c.name for c in p.columns
+            if c.in_train and c.name not in s["target"] and c.name != s["id_col"]
+            and c.kind in ("categorical", "numeric", "binary") and not (c.kind == "numeric" and not _int_like(p.train[c.name]))
+            and 2 <= c.n_unique <= max(2, n // 2)]
         if fold is not None and current:
             y, mask, classes = p.encoded_target()
             out["summary"] = jsonable(fold_summary(p.train, fold, s["task"], y, classes,
@@ -515,32 +568,49 @@ class App:
         strategy = params.get("strategy") or "kfold"
         if strategy not in STRATEGIES:
             raise LoadError("알 수 없는 검증 방법입니다.")
-        n_splits = int(params.get("n_splits") or 5)
+        try:
+            n_splits = int(params.get("n_splits") or 5)
+            seed = int(params.get("seed") if params.get("seed") not in (None, "") else 42)
+        except (TypeError, ValueError):
+            raise LoadError("폴드 수와 시드는 정수로 적으세요.")
         if not 2 <= n_splits <= 20:
             raise LoadError("폴드 수는 2~20 사이로 정하세요.")
-        seed = int(params.get("seed") if params.get("seed") not in (None, "") else 42)
-        group_col = params.get("group_col") or None
-        time_col = params.get("time_col") or None
+        group_col = (params.get("group_col") or None) if strategy in ("group", "stratified_group") else None
+        time_col = (params.get("time_col") or None) if strategy == "time" else None
         if strategy in ("group", "stratified_group") and not group_col:
             raise LoadError("그룹 컬럼을 고르세요.")
         if strategy == "time" and not time_col:
             raise LoadError("날짜 컬럼을 고르세요.")
-        if strategy in ("stratified", "stratified_group") and s["task"] == "regression":
-            pass  # 회귀는 구간으로 나눠 층화
+        for c in (group_col, time_col):
+            if c and c not in p.train.columns:
+                raise LoadError(f"train에 '{c}' 컬럼이 없습니다.")
         y, mask, classes = p.encoded_target()
         fold = make_folds(p.train, strategy, n_splits, seed, y, mask, group_col, time_col)
+        actual = len({int(k) for k in fold if k >= 0})
+        if actual < 2:
+            raise LoadError("폴드를 2개 이상 만들 수 없습니다. 날짜·그룹 종류가 너무 적은지 확인하세요.")
+        notice = None
+        if actual < n_splits:
+            why = "날짜 종류" if strategy == "time" else "그룹 수" if group_col else "행 수"
+            notice = f"{why}가 적어 폴드가 {n_splits}개가 아니라 {actual}개만 만들어졌습니다."
         path = p.save_folds(fold)
-        s["cv"] = {"strategy": strategy, "n_splits": n_splits, "seed": seed, "group_col": group_col,
-                   "time_col": time_col, "created_at": time.strftime("%Y-%m-%d %H:%M")}
+        s["cv"] = {"strategy": strategy, "n_splits": actual, "requested_splits": n_splits, "seed": seed,
+                   "group_col": group_col, "time_col": time_col, "created_at": time.strftime("%Y-%m-%d %H:%M")}
         p.save_settings()
-        return {"ok": True, "path": str(path), "summary": jsonable(fold_summary(p.train, fold, s["task"], y, classes,
-                                                                                 group_col, time_col))}
+        return {"ok": True, "path": str(path), "notice": notice,
+                "summary": jsonable(fold_summary(p.train, fold, s["task"], y, classes, group_col, time_col))}
 
     def baseline(self, params: dict) -> dict:
         p = self.require()
         if not p.target_col():
             raise LoadError("타깃 컬럼을 먼저 정하세요.")
-        job = self.jobs.submit("baseline", "기본 모델 교차검증", self._baseline_job, p, params or {})
+        y, mask, _ = p.encoded_target()
+        if y is None or mask.sum() == 0:
+            raise LoadError("타깃 값이 모두 비어 있어 학습할 수 없습니다.")
+        if len(np.unique(y[mask])) <= 1:
+            raise LoadError("타깃 값이 하나뿐이라 학습할 수 없습니다. 개요에서 타깃이 맞는지 확인하세요.")
+        job = self.jobs.submit("baseline", "기본 모델 교차검증", self._baseline_job, p, params or {},
+                               key=json.dumps(params or {}, sort_keys=True, default=str))
         return {"job": job.to_dict(False)}
 
     def _baseline_job(self, job, p: Project, params: dict):
@@ -548,16 +618,18 @@ class App:
         y, mask, classes = p.encoded_target()
         fold = p.load_folds()
         if fold is None or not s.get("cv"):
-            job.update(0.02, "추천 검증 방법으로 폴드를 만드는 중")
+            job.update(0.01, "추천 검증 방법을 찾는 중")
             chk = p.cache.get("checks")
             if chk is None:
-                self._profiles_job_if_needed(job, p)
-                self._checks_job(job, p)
+                self._profiles_job_if_needed(_SubProgress(job, 0.0, 0.3), p)
+                self._checks_job(_SubProgress(job, 0.3, 0.38), p)
                 chk = p.cache["checks"]
             rec = chk["recommend"]
+            job.update(0.39, "추천 방법으로 폴드를 만드는 중")
             self.make_folds({"strategy": rec["strategy"], "n_splits": rec["n_splits"], "seed": 42,
                              "group_col": rec.get("group_col"), "time_col": rec.get("time_col")})
             fold = p.load_folds()
+        lo = 0.4 if job.progress >= 0.39 else 0.05
         cv = s["cv"]
         exclude = set(params.get("exclude") or [])
         if cv.get("group_col") and params.get("drop_group", True):
@@ -569,14 +641,40 @@ class App:
         if not mat.features:
             raise LoadError("학습에 쓸 수 있는 컬럼이 없습니다 (모두 ID·상수이거나 한쪽 파일에만 있음).")
         engine = params.get("engine") or "auto"
-        lr = float(params.get("learning_rate") or 0.05)
-        n_classes = len(classes) if s["task"] == "multiclass" else 2
-        res = run_baseline(mat, y, mask, s["task"], n_classes, fold, s["metric"], cv["strategy"],
-                           engine=engine, learning_rate=lr, progress=lambda f, m: job.update(0.05 + f * 0.85, m))
-        job.update(0.92, "결과 저장 중")
+        try:
+            lr = float(params.get("learning_rate") or 0.05)
+        except (TypeError, ValueError):
+            raise LoadError("학습률은 숫자로 적으세요.")
+        if not 0 < lr <= 1:
+            raise LoadError("학습률은 0보다 크고 1 이하여야 합니다.")
+        targets = list(s["target"])
+        span = (0.92 - lo) / len(targets)
+        per_target, primary = [], None
+        for ti, t in enumerate(targets):
+            if ti == 0:
+                yt, mt, cl, task_t, metric_t = y, mask, classes, s["task"], s["metric"]
+            else:
+                from .analysis.common import encode_target
+                task_t = _guess_task(p.train[t])
+                cl = _classes(p.train[t]) if task_t != "regression" else []
+                yt, mt, cl = encode_target(p.train[t], task_t, cl)
+                metric_t = s["metric"] if (s["metric"] in M.METRICS and task_t in M.METRICS[s["metric"]].tasks) \
+                    else M.DEFAULT_METRIC[task_t]
+            if len(np.unique(yt[mt])) <= 1:
+                raise LoadError(f"타깃 '{t}'의 값이 하나뿐이라 학습할 수 없습니다.")
+            n_cls = len(cl) if task_t == "multiclass" else 2
+            prefix = f"[{t}] " if len(targets) > 1 else ""
+            res = run_baseline(mat, yt, mt, task_t, n_cls, fold, metric_t, cv["strategy"], engine=engine,
+                               learning_rate=lr,
+                               progress=lambda f, m, a=lo + ti * span: job.update(a + f * span, prefix + m))
+            per_target.append({"target": t, "task": task_t, "classes": cl, "metric": metric_t, "res": res})
+        primary = per_target[0]
+        res = primary["res"]
+        job.update(0.93, "결과 저장 중")
         ids = p.train[s["id_col"]].to_numpy() if s["id_col"] in p.train.columns else None
         oof = oof_frame(res["_oof"], s["task"], classes, ids, fold)
         test_df = sub = None
+        sub_note = ""
         if res["_test"] is not None:
             tid = p.test[s["id_col"]].to_numpy() if (s["id_col"] and s["id_col"] in p.test.columns) else None
             test_df = oof_frame(res["_test"], s["task"], classes, tid)
@@ -584,20 +682,42 @@ class App:
                 try:
                     sub = make_submission(res["_test"], p.sample, p.test, s["id_col"], s["task"], classes,
                                           s["submission_format"], s["metric"])
-                except ValueError:
-                    sub = None
+                    for pt in per_target[1:]:
+                        if pt["target"] in p.sample.columns:
+                            cols_ = [c for c in (s["id_col"], pt["target"]) if c and c in p.sample.columns]
+                            st_ = make_submission(pt["res"]["_test"], p.sample[cols_], p.test, s["id_col"],
+                                                  pt["task"], pt["classes"], "value", pt["metric"])
+                            sub[pt["target"]] = st_[pt["target"]].to_numpy()
+                except ValueError as ex:
+                    sub, sub_note = None, f"제출 파일을 만들지 못했습니다: {ex}"
         n_prev = sum(1 for e in self.ledger().load() if e.get("source") == "baseline")
-        name = params.get("name") or f"기본 {'LightGBM' if res['engine'] == 'lightgbm' else 'HistGB'} #{n_prev + 1}"
+        name = (params.get("name") or "").strip() or f"기본 모델 #{n_prev + 1}"
+        notes = params.get("notes", "") or ""
+        cv_value, cv_std = res["cv"], res["cv_std"]
+        extra_params = {}
+        if len(per_target) > 1:
+            same_metric = len({pt["metric"] for pt in per_target}) == 1
+            extra_params["cv_by_target"] = {pt["target"]: pt["res"]["cv"] for pt in per_target}
+            if same_metric:
+                cv_value = float(np.mean([pt["res"]["cv"] for pt in per_target]))
+                cv_std = None
+            notes = (notes + " " if notes else "") + (
+                f"타깃 {len(per_target)}개를 따로 학습했습니다. CV는 타깃별 점수의 평균, "
+                f"OOF(앙상블·흔들림 계산)는 첫 타깃 '{targets[0]}' 기준입니다.")
         e = self.ledger().add(
-            name, s["metric"], res["cv"], res["cv_std"], jsonable(res["fold_scores"]), source="baseline",
+            name, s["metric"], cv_value, cv_std, jsonable(res["fold_scores"]), source="baseline",
             params={"engine": res["engine"], "learning_rate": lr, "n_features": res["n_features"],
-                    "strategy": cv["strategy"], "n_splits": cv["n_splits"], "excluded": sorted(exclude),
-                    "mean_best_iteration": res["mean_best_iteration"]},
-            notes=params.get("notes", ""), oof=oof, test_pred=test_df, submission=sub,
+                    "strategy": cv["strategy"], "n_splits": cv["n_splits"],
+                    "excluded": sorted(exclude | set(s.get("excluded") or [])),
+                    "mean_best_iteration": res["mean_best_iteration"], **extra_params},
+            notes=notes, oof=oof, test_pred=test_df, submission=sub,
             extra={"importance": jsonable(res["importance"][:60])})
         out = {k: v for k, v in res.items() if not k.startswith("_")}
+        out["cv"], out["cv_std"] = cv_value, cv_std
         out["experiment"] = e
         out["skipped"] = mat.skipped
+        out["targets"] = [{"target": pt["target"], "cv": pt["res"]["cv"], "metric": pt["metric"]} for pt in per_target]
+        out["notice"] = sub_note or None
         return jsonable(out)
 
     def _profiles_job_if_needed(self, job, p):
@@ -610,10 +730,12 @@ class App:
     def experiments(self) -> dict:
         p = self.require()
         s = p.settings
-        exps = self.ledger().load()
+        led = self.ledger()
+        exps = led.load()
         metric = s["metric"]
         hib = M.METRICS[metric].higher_is_better if metric in M.METRICS else True
         comp = s["competition"]
+        exps = [self._rescore(p, led, e, metric) for e in exps]
         today = time.strftime("%Y-%m-%d")
         sub_today = sum(1 for e in exps if (e.get("submitted_at") or "").startswith(today))
         best = None
@@ -629,6 +751,7 @@ class App:
             r["has_test"] = bool((e.get("files") or {}).get("test"))
             r["has_submission"] = bool((e.get("files") or {}).get("submission"))
             r["metric_mismatch"] = bool(e.get("metric") and e["metric"] != metric)
+            r["metric_label"] = (M.METRICS[e["metric"]].label if e.get("metric") in M.METRICS else e.get("metric"))
             rows.append(r)
         picks = int(comp.get("final_picks") or 2)
         return jsonable({
@@ -641,6 +764,31 @@ class App:
             "platform": comp.get("platform"), "final_picks": picks,
             "snippet": _log_snippet(p),
         })
+
+    def _rescore(self, p: Project, led: Ledger, e: dict, metric: str) -> dict:
+        """다른 지표로 기록된 실험은 OOF가 있으면 지금 지표로 다시 계산해 보여 준다 (원래 값은 cv_original)."""
+        if not e.get("metric") or e["metric"] == metric or metric not in M.METRICS:
+            return e
+        if not (e.get("files") or {}).get("oof"):
+            return e
+        cache = p.cache.setdefault("rescore", {})
+        key = (e["id"], metric)
+        if key not in cache:
+            try:
+                o = led.read_oof(e)
+                y, mask, _ = p.encoded_target()
+                pred = frame_pred(o, p.settings["task"])
+                ok = mask & (~np.isnan(pred).any(axis=1) if pred.ndim == 2 else ~np.isnan(pred))
+                cache[key] = float(M.score(metric, y[ok], pred[ok])) if ok.sum() > 1 else None
+            except Exception:
+                cache[key] = None
+        val = cache[key]
+        if val is None or not np.isfinite(val):
+            return e
+        e = dict(e)
+        e.update({"cv_original": e.get("cv"), "metric_original": e["metric"], "cv": val, "cv_std": None,
+                  "metric": metric, "rescored": True})
+        return e
 
     def experiment_detail(self, exp_id: str) -> dict:
         e = self.ledger().get(exp_id)
@@ -858,6 +1006,8 @@ class App:
             raise LoadError("먼저 앙상블을 실행하세요.")
         led = self.ledger()
         exps = [led.get(i) for i in last["ids"]]
+        if any(e is None for e in exps):
+            raise LoadError("앙상블에 쓴 실험 중 지워진 것이 있습니다. 다시 실행하세요.")
         w = np.asarray(last["_weights"], float)
         y, mask, classes = p.encoded_target()
         oofs = [frame_pred(led.read_oof(e), s["task"]) for e in exps]
@@ -865,29 +1015,61 @@ class App:
         ids = p.train[s["id_col"]].to_numpy() if s["id_col"] in p.train.columns else None
         oof_df = oof_frame(blend_oof, s["task"], classes, ids, p.load_folds())
         test_df = sub = None
+        note = ""
         if last["has_all_tests"]:
-            tests = [frame_pred(led.read_test(e), s["task"]) for e in exps]
-            if len({t.shape for t in tests}) == 1:
-                bt = blend_test(tests, w, last["use_rank"])
-                tid = (led.read_test(exps[0]).get("id").to_numpy()
-                       if "id" in led.read_test(exps[0]).columns else None)
-                test_df = oof_frame(bt, s["task"], classes, tid)
-                if p.sample is not None:
-                    # test 예측이 제출 파일에서 왔으면 이미 sample 순서, 기본 모델에서 왔으면 test 순서
-                    try:
-                        sub = make_submission(bt, p.sample, _test_like(p, tid), s["id_col"], s["task"], classes,
+            aligned, ref_ids, why = self._aligned_tests(p, led, exps)
+            if aligned is None:
+                note = why
+            else:
+                bt = blend_test(aligned, w, last["use_rank"])
+                test_df = oof_frame(bt, s["task"], classes, ref_ids)
+                if p.sample is not None and ref_ids is not None:
+                    try:  # aligned는 sample_submission 순서
+                        sub = make_submission(bt, p.sample, None, s["id_col"], s["task"], classes,
                                               s["submission_format"], s["metric"])
-                    except ValueError:
-                        sub = None
+                    except ValueError as ex:
+                        note = f"제출 파일을 만들지 못했습니다: {ex}"
         cv = last["honest"]["score"] if last.get("honest") else last["score"]
-        name = params.get("name") or "앙상블 (" + " + ".join(
-            f"{wt['name']} {wt['weight']:.2f}" for wt in last["weights"] if wt["weight"] > 0) + ")"
+        n_prev = sum(1 for e in led.load() if e.get("source") == "ensemble")
+        used = [wt for wt in last["weights"] if wt["weight"] > 0]
+        name = (params.get("name") or "").strip() or f"앙상블 #{n_prev + 1} ({len(used)}개 모델)"
+        weights_txt = ", ".join(f"{wt['name']} {wt['weight']:.0%}" for wt in used)
+        notes = ("CV는 폴드 교차로 잰 정직한 점수입니다. " if last.get("honest") else "") + f"가중치: {weights_txt}" + \
+            (f" · {note}" if note else "")
         e = led.add(name[:120], s["metric"], cv, None, source="ensemble",
                     params={"weights": last["weights"], "use_rank": last["use_rank"], "method": last["method"],
                             "in_sample_score": last["score"]},
-                    notes="CV는 폴드 교차로 잰 정직한 점수입니다." if last.get("honest") else "",
-                    oof=oof_df, test_pred=test_df, submission=sub)
-        return jsonable({"experiment": e, "has_submission": sub is not None})
+                    notes=notes, oof=oof_df, test_pred=test_df, submission=sub)
+        return jsonable({"experiment": e, "has_submission": sub is not None, "notice": note or None})
+
+    def _aligned_tests(self, p: Project, led: Ledger, exps: list[dict]):
+        """실험마다 test 예측의 행 순서가 다를 수 있어(test 순서 / 제출 파일 순서) ID로 같은 순서에 맞춘다.
+        반환: (예측 배열 목록, 기준 ID, 실패 이유)"""
+        s = p.settings
+        id_col = s["id_col"]
+        frames = [led.read_test(e) for e in exps]
+        if p.sample is not None and id_col and id_col in p.sample.columns:
+            ref = p.sample[id_col]
+        elif p.test is not None and id_col and id_col in p.test.columns:
+            ref = p.test[id_col]
+        else:
+            ref = None
+        if ref is not None and all("id" in f.columns for f in frames):
+            key = ref.astype("string").str.strip().to_numpy()
+            out = []
+            for e, f in zip(exps, frames):
+                pos = pd.Series(np.arange(len(f)), index=f["id"].astype("string").str.strip().to_numpy())
+                if pos.index.has_duplicates:
+                    return None, None, f"'{e['name']}'의 test 예측에 중복 ID가 있어 섞을 수 없습니다."
+                missing = set(key) - set(pos.index)
+                if missing:
+                    return None, None, f"'{e['name']}'의 test 예측에 없는 ID가 {len(missing):,}개 있어 제출 파일을 만들지 않았습니다."
+                out.append(frame_pred(f.iloc[pos.loc[key].to_numpy()], s["task"]))
+            return out, ref.to_numpy(), ""
+        preds = [frame_pred(f, s["task"]) for f in frames]
+        if len({pr.shape for pr in preds}) == 1:
+            return preds, None, "ID가 없어 행 순서가 같다고 보고 섞었습니다. 제출 파일은 만들지 않았습니다."
+        return None, None, "실험마다 test 예측 행 수가 달라 섞을 수 없습니다."
 
     def kaggle_import(self, params: dict) -> dict:
         """Kaggle 공식 CLI로 제출 기록(Public/Private 점수)을 가져와 실험에 붙인다."""
@@ -916,17 +1098,27 @@ class App:
         except subprocess.TimeoutExpired:
             raise LoadError("Kaggle 응답이 90초 안에 오지 않았습니다. 잠시 후 다시 해 보세요.")
         out = (r.stdout or "").strip()
-        if r.returncode != 0 or not out:
-            msg = (r.stderr or out or "").strip().splitlines()[-1:] or ["알 수 없는 오류"]
-            hint = ""
-            low = (r.stderr + out).lower()
-            if "401" in low or "unauthorized" in low or "credentials" in low or "kaggle.json" in low:
-                hint = " Kaggle API 토큰(kaggle.json 등)이 설정돼 있는지 확인하세요."
-            elif "403" in low:
-                hint = " 대회 규칙에 동의했는지, 대회 주소가 맞는지 확인하세요."
-            raise LoadError(f"Kaggle CLI 오류: {msg[0][:300]}{hint}")
         lines = out.splitlines()
-        start = next((i for i, ln in enumerate(lines) if "," in ln and "date" in ln.lower()), 0)
+
+        def is_header(ln: str) -> bool:
+            fields = {f.strip().strip('"').lower().replace("_", "") for f in ln.split(",")}
+            return "date" in fields and ("filename" in fields or "publicscore" in fields)
+        start = next((i for i, ln in enumerate(lines) if is_header(ln)), None)
+        if r.returncode != 0 or start is None:
+            low = ((r.stderr or "") + out).lower()
+            if "kaggle.json" in low or "could not find" in low or "401" in low or "unauthorized" in low or "credentials" in low:
+                raise LoadError("Kaggle API 토큰을 찾지 못했습니다. kaggle.com 계정 설정에서 API 토큰을 받아 "
+                                f"{Path.home() / '.kaggle' / 'kaggle.json'}에 두거나, KAGGLE_USERNAME·KAGGLE_KEY 환경 변수를 설정하세요.")
+            if "403" in low or "forbidden" in low:
+                raise LoadError("Kaggle이 거부했습니다. 대회 규칙에 동의했는지, 대회 주소가 맞는지 확인하세요.")
+            if "404" in low or "not found" in low:
+                raise LoadError(f"Kaggle에서 대회 '{slug}'를 찾지 못했습니다. 설정의 대회 주소를 확인하세요.")
+            if start is None and r.returncode == 0:
+                if "no submissions" in low or not out:
+                    return {"ok": True, "matched": 0, "created": 0, "skipped": 0, "total": 0}
+                raise LoadError("Kaggle CLI 출력 형식을 알아보지 못했습니다. Kaggle CLI를 최신으로 업데이트해 보세요.")
+            last = ((r.stderr or out or "").strip().splitlines() or ["알 수 없는 오류"])[-1]
+            raise LoadError(f"Kaggle CLI가 실패했습니다: {last[:300]}")
         df = pd.read_csv(StringIO(chr(10).join(lines[start:])))
         cols = {c.lower().replace("_", ""): c for c in df.columns}
 
@@ -962,9 +1154,7 @@ class App:
                     if e["id"] in fname or e["id"] in desc or (e["name"] and len(e["name"]) >= 3 and e["name"] in desc):
                         target = e
                         break
-            fields = {"lb_public": float(pub), "kaggle_key": key,
-                      "submitted_at": pd.to_datetime(date, errors="coerce").strftime("%Y-%m-%dT%H:%M:%S")
-                      if pd.notna(pd.to_datetime(date, errors="coerce")) else None}
+            fields = {"lb_public": float(pub), "kaggle_key": key, "submitted_at": _local_time(date)}
             if pd.notna(priv):
                 fields["lb_private"] = float(priv)
             if target is not None:
@@ -983,7 +1173,7 @@ class App:
         return {"ok": True, "matched": matched, "created": created, "skipped": skipped, "total": len(df)}
 
     def report(self, params: dict) -> dict:
-        from .report import build_report
+        from .htmlreport import build_report
         p = self.require()
         out = Path(params.get("path") or (p.dir / f"report-{time.strftime('%Y%m%d-%H%M')}.html"))
         job = self.jobs.submit("report", "보고서 만들기", lambda job: build_report(self, out, job))
@@ -1048,7 +1238,7 @@ class App:
         p = self.require()
         prof = p.cache.get("profiles") or {}
         feats = [c for c in p.feature_columns() if c.in_train and c.kind in ("numeric", "binary", "datetime")]
-        feats.sort(key=lambda c: -((prof.get(c.name) or {}).get("power") or {}).get("power", 0) or 0)
+        feats.sort(key=lambda c: -(((prof.get(c.name) or {}).get("power") or {}).get("power") or 0.0))
         feats = feats[:limit]
         if len(feats) < 2:
             return {"names": [], "matrix": [], "pairs": []}
@@ -1110,6 +1300,8 @@ class App:
 
         def vals(c, info):
             s = df[c].iloc[idx]
+            if info.kind == "text":
+                return s.astype("string").str.len().astype("float64").to_numpy(), False
             if info.kind == "datetime":
                 return to_float(to_datetime_safe(s)), True
             if info.kind == "numeric" or (info.kind == "binary" and pd.api.types.is_numeric_dtype(s)):
@@ -1140,6 +1332,10 @@ class App:
                 return jsonable({"type": "scatter", "x": x, "y": ycol, "points": pts, "groups": gl,
                                  "color": color_name, "x_date": xdate, "y_date": ydate, "sampled": len(idx) < n,
                                  "n": n})
+            note = None
+            if xv is not None and yv is None:  # x 숫자, y 범주 → 축을 바꿔 상자 그림
+                x, ycol, xv, yv, ydate = ycol, x, None, xv, xdate
+                note = "숫자를 세로축에 두고 범주별 상자 그림으로 그렸습니다."
             if yv is not None:  # x 범주, y 숫자 → 상자 그림
                 cat = df[x].iloc[idx]
                 top = cat.value_counts().index[:20]
@@ -1154,7 +1350,7 @@ class App:
                         boxes.append({"label": as_label(k), "stats": [float(lo), float(q[1]), float(q[2]),
                                                                        float(q[3]), float(hi)], "n": int(v.size)})
                 return jsonable({"type": "box", "x": x, "y": ycol, "boxes": boxes, "y_date": ydate,
-                                 "sampled": len(idx) < n, "n": n})
+                                 "sampled": len(idx) < n, "n": n, "note": note})
             # 둘 다 범주 → 교차표
             a, b = df[x].iloc[idx], df[ycol].iloc[idx]
             ta, tb = a.value_counts().index[:15], b.value_counts().index[:10]
@@ -1204,8 +1400,11 @@ class App:
         sort = params.get("sort")
         if sort and sort in view.columns:
             view = view.sort_values(sort, ascending=bool(params.get("asc", True)), na_position="last", kind="stable")
-        offset = max(0, int(params.get("offset") or 0))
-        limit = min(500, max(1, int(params.get("limit") or 100)))
+        try:
+            offset = max(0, int(params.get("offset") or 0))
+            limit = min(500, max(1, int(params.get("limit") or 100)))
+        except (TypeError, ValueError):
+            raise LoadError("offset·limit은 정수여야 합니다.")
         page = view.iloc[offset: offset + limit]
         return {"columns": [str(c) for c in view.columns], "total": int(len(df)), "matched": int(len(view)),
                 "offset": offset,
@@ -1214,6 +1413,31 @@ class App:
 
 
 # ═════════════════════════════════════════ 도우미
+class _SubProgress:
+    """안쪽 작업의 진행률(0~1)을 바깥 작업의 일부 구간으로 바꿔 진행률이 뒤로 가지 않게 한다."""
+
+    def __init__(self, job, lo: float, hi: float):
+        self.job, self.lo, self.hi = job, lo, hi
+        self.progress = lo
+
+    def update(self, frac, msg=None):
+        self.progress = self.lo + (self.hi - self.lo) * float(frac)
+        self.job.update(self.progress, msg)
+
+
+def _int_like(s: pd.Series) -> bool:
+    from .schema import integer_valued
+    return pd.api.types.is_integer_dtype(s) or integer_valued(s.dropna().head(100_000))
+
+
+def _local_time(text: str) -> str | None:
+    """Kaggle이 주는 UTC 시각을 이 컴퓨터의 현지 시각 문자열로"""
+    ts = pd.to_datetime(text, errors="coerce", utc=True)
+    if pd.isna(ts):
+        return None
+    return ts.to_pydatetime().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def _metric_info(key):
     if key in M.METRICS:
         m = M.METRICS[key]
@@ -1245,21 +1469,10 @@ def _test_like(p: Project, tid):
 
 
 def _read_sub(path: str) -> pd.DataFrame:
-    from .io import _read_csv  # noqa: 내부 함수 재사용
+    """제출 파일 읽기: 앞자리 0이 있는 ID는 문자열로 보존 (io.read_table과 같은 규칙)."""
     pth = Path(path)
-    if pth.suffix.lower() in (".csv", ".tsv", ".txt"):
-        # ID 앞자리 0 보존을 위해 첫 컬럼은 문자열로 읽어 본다
-        from .io import detect_encoding
-        enc = detect_encoding(pth)
-        head = pd.read_csv(pth, nrows=5, encoding=enc)
-        dtypes = {head.columns[0]: "string"} if len(head.columns) else None
-        df = pd.read_csv(pth, encoding=enc, dtype=dtypes, low_memory=False)
-        first = df.columns[0]
-        # 숫자로만 된 ID면 숫자로 되돌린다 (앞자리 0이 없을 때만)
-        s = df[first]
-        if s.notna().all() and s.str.fullmatch(r"-?\d+").all() and not s.str.match(r"0\d").any():
-            df[first] = pd.to_numeric(s)
-        return df
+    if not pth.exists():
+        raise LoadError(f"파일이 없습니다: {path}")
     return read_table(pth)
 
 
@@ -1332,15 +1545,21 @@ def _cell(v):
 def _fold_snippet(p: Project) -> str:
     path = str(p.folds_path()).replace("\\", "/")
     id_col = p.settings.get("id_col")
+    strategy = ((p.settings.get("cv") or {}).get("strategy")) or ""
     lines = ["import pandas as pd", "", f'folds = pd.read_csv(r"{path}")',
              "train = train.reset_index(drop=True)"]
     if id_col and p.train is not None and id_col in p.train.columns:
-        lines += [f'assert (train["{id_col}"].values == folds["{id_col}"].values).all()  # 행 순서 확인']
-    lines += ['train["fold"] = folds["fold"].values', "",
-              "for k in sorted(train.loc[train.fold >= 0, 'fold'].unique()):",
-              "    trn, val = train[train.fold != k], train[train.fold == k]",
-              "    # 시간 검증이면: trn = train[train.fold < k]",
-              "    ..."]
+        lines += [f'assert (train["{id_col}"].astype(str).values == folds["{id_col}"].astype(str).values).all()  # 행 순서 확인']
+    lines += ['train["fold"] = folds["fold"].values', ""]
+    if strategy == "time":
+        lines += ["# 시간 순서 검증: 각 폴드는 그보다 앞선 기간 전부로 학습하고 그 기간으로 검증합니다 (fold -1은 학습에만 씀)",
+                  "for k in sorted(train.loc[train.fold >= 0, 'fold'].unique()):",
+                  "    trn, val = train[train.fold < k], train[train.fold == k]",
+                  "    ..."]
+    else:
+        lines += ["for k in sorted(train.loc[train.fold >= 0, 'fold'].unique()):",
+                  "    trn, val = train[(train.fold != k) & (train.fold >= 0)], train[train.fold == k]",
+                  "    ..."]
     return "\n".join(lines)
 
 

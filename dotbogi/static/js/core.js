@@ -96,7 +96,9 @@
       if (x === null || x === undefined || Number.isNaN(x)) return "–";
       if (x === 0) return "0";
       const a = Math.abs(x);
-      if (a >= 1e6 || a < 1e-4) return x.toExponential(2);
+      if (a < 1e-4) return (x < 0 ? ">-" : "<") + "0.0001";
+      if (a >= 1e8) return (x / 1e8).toFixed(a >= 1e10 ? 0 : 1).replace(/\.0$/, "") + "억";
+      if (a >= 1e6) return (x / 1e4).toFixed(0) + "만";
       if (Number.isInteger(x) && a < 1e6) return nf.format(x);
       const s = Number(x.toPrecision(sig));
       return a >= 1000 ? nf.format(s) : String(s);
@@ -275,7 +277,11 @@
 
   D.modal = function ({ title, body, footer, wide, onClose }) {
     const close = () => { back.remove(); document.removeEventListener("keydown", onKey); if (onClose) onClose(); };
-    const onKey = (e) => { if (e.key === "Escape") close(); };
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      const all = document.querySelectorAll(".modal-back");
+      if (all[all.length - 1] === back) { e.stopPropagation(); close(); }
+    };
     const back = h("div", { class: "modal-back", onmousedown: (e) => { if (e.target === back) close(); } },
       h("div", { class: "modal" + (wide ? " wide" : ""), role: "dialog", "aria-modal": "true" },
         h("div", { class: "modal-h" }, h("h3", null, title), h("span", { class: "grow" }),
@@ -290,13 +296,13 @@
   };
   D.confirm = function (title, text, okLabel = "확인", danger = false) {
     return new Promise((resolve) => {
-      let m;
-      const done = (v) => { m.close(); resolve(v); };
+      let m, settled = false;
+      const done = (v) => { if (settled) return; settled = true; resolve(v); m.close(); };
       m = D.modal({
         title, body: h("p", { style: { margin: "4px 0 8px" } }, text),
         footer: [h("button", { class: "btn", onclick: () => done(false) }, "취소"),
           h("button", { class: "btn " + (danger ? "danger" : "primary"), onclick: () => done(true) }, okLabel)],
-        onClose: () => resolve(false),
+        onClose: () => { if (!settled) { settled = true; resolve(false); } },
       });
     });
   };
@@ -479,7 +485,7 @@
         const disabled = needsProject && !(proj && proj.loaded);
         if (D.STATIC && !(D.STATIC.pages || []).includes(name)) continue;
         const badge = D.navBadges[name];
-        sb.appendChild(h("div", { class: "nav-item" + (cur === name ? " active" : "") + (disabled ? " disabled" : ""), onclick: () => D.go(name) },
+        sb.appendChild(h("div", { class: "nav-item" + (cur === name ? " active" : "") + (disabled ? " disabled" : ""), title: disabled ? "대회 폴더를 먼저 여세요" : label, onclick: () => D.go(name) },
           D.icon(icon), h("span", null, label),
           badge ? h("span", { class: "nav-badge " + badge.kind }, badge.text) : null));
       }
@@ -492,7 +498,8 @@
     const dark = document.documentElement.dataset.theme === "dark";
     sb.appendChild(h("div", { class: "sidebar-foot" },
       h("button", { class: "icon-btn", title: dark ? "밝은 테마" : "어두운 테마", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon")),
-      h("span", { class: "ver" }, D.state ? "v" + D.state.version + (D.state.lightgbm ? " · LightGBM" : " · HistGB") : "")));
+      h("span", { class: "ver", title: D.state && !D.state.lightgbm ? "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" : "" },
+        D.state ? "v" + D.state.version + " · 모델 " + (D.state.lightgbm ? "LightGBM" : "scikit-learn") : "")));
   }
   D.renderSidebar = renderSidebar;
 
@@ -531,7 +538,7 @@
     let name = D.route.name;
     const proj = D.project();
     if (name !== "home" && !(proj && proj.loaded)) name = "home";
-    if (D.STATIC && name === "home") name = "overview";
+    if (D.STATIC && (name === "home" || !(D.STATIC.pages || []).includes(name))) name = "overview";
     const page = D.pages[name] || D.pages.home;
     renderSidebar();
     const top = document.getElementById("topbar");
@@ -572,7 +579,7 @@
     try {
       await D.refreshState();
       for (const j of (D.state.jobs || [])) {
-        if (j.kind === "load") D.runJob(j).then(() => D.refreshState()).then(() => D.render()).catch(D.fail);
+        D.runJob(j).then(() => D.refreshState()).then(() => D.render()).catch(D.fail);
       }
     } catch (e) {
       document.getElementById("content").appendChild(D.errorBox(e, () => location.reload()));

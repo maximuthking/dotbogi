@@ -24,6 +24,23 @@
         D.runJob(loadJob).then(() => D.refreshState()).then(() => D.go("overview")).catch(D.fail);
       }
 
+      if (proj && !proj.loaded && proj.load_error) {
+        const s = proj.settings;
+        const abs = (p) => (!p ? "" : /^([a-zA-Z]:[\\/]|\/)/.test(p) ? p : proj.root.replace(/[\\/]$/, "") + "\\" + p);
+        const tr = D.pathField(abs(s.files.train), { placeholder: "train 파일", start: proj.root });
+        const te = D.pathField(abs(s.files.test), { placeholder: "test 파일 (없으면 비워 두기)", start: proj.root });
+        const ss = D.pathField(abs(s.files.sample_submission), { placeholder: "sample_submission 파일 (없으면 비워 두기)", start: proj.root });
+        const go = h("button", { class: "btn primary", onclick: () => D.busy(go, async () => {
+          if (!tr.value) throw new Error("train 파일을 고르세요.");
+          const r = await D.api("/api/files", { body: { train: tr.value, test: te.value, sample_submission: ss.value } });
+          await D.runJob(r.job); await D.refreshState(); D.toast("대회 폴더를 열었습니다."); D.go("overview");
+        }) }, "이 파일들로 열기");
+        page.appendChild(D.card("이 폴더를 열지 못했습니다", { hint: proj.root },
+          D.callout("warn", proj.load_error),
+          h("div", { class: "col mt12" }, h("div", { class: "small muted" }, "파일을 직접 고르면 그대로 엽니다."), tr, te, ss),
+          h("div", { class: "row mt12" }, h("span", { class: "grow" }), go)));
+      }
+
       if (proj && proj.loaded) {
         page.appendChild(D.card(null, null, h("div", { class: "row" },
           h("div", { class: "grow" }, h("div", { class: "muted small" }, "지금 열린 대회"),
@@ -33,7 +50,10 @@
 
       // 폴더 열기
       const input = h("input", { class: "input", placeholder: "대회 데이터 폴더 경로 (예: C:\\Projects\\Dacon\\대회이름)", value: "" });
-      const openBtn = h("button", { class: "btn primary lg", onclick: () => D.busy(openBtn, () => D.openProject(input.value.trim())) }, "열기");
+      const openBtn = h("button", { class: "btn primary lg", onclick: () => D.busy(openBtn, () => {
+        if (!input.value.trim()) throw new Error("폴더 경로를 적거나 '찾아보기'로 고르세요.");
+        return D.openProject(input.value.trim());
+      }) }, "열기");
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") openBtn.click(); });
       const browseBtn = h("button", { class: "btn lg", onclick: async () => {
         const p = await D.browse({ mode: "folder", start: input.value || (proj ? proj.root : (st.recent && st.recent[0] ? st.recent[0].path : "")) });

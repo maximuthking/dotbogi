@@ -33,7 +33,12 @@
           }
           if (!r.dirs.length && !r.files.length) list.appendChild(h("div", { class: "browser-item file" }, "비어 있습니다 (표 파일·하위 폴더 없음)"));
           D.clear(detect);
-          if (mode === "folder") {
+          if (mode === "folder" && (r.ambiguous || []).length) {
+            detect.appendChild(h("div", { class: "callout info mt8" }, D.icon("info"), h("div", { class: "grow" },
+              h("div", { class: "bold" }, "이 폴더 아래에 대회가 여러 개 있습니다. 하나를 고르세요."),
+              h("div", { class: "row mt8", style: { gap: "6px" } }, r.ambiguous.map((d) => h("span", { class: "chip", onclick: () => load(d) }, rel(d, r.path) || d))))));
+            okBtn.disabled = true;
+          } else if (mode === "folder") {
             const dt = r.detected || {};
             const any = dt.train || dt.test || dt.sample_submission;
             detect.appendChild(any
@@ -82,10 +87,17 @@
   D.openProject = async function (path) {
     if (!path) return;
     const r = await D.api("/api/open", { body: { path } });
-    await D.runJob(r.job);
+    try {
+      await D.runJob(r.job);
+    } catch (e) {
+      await D.refreshState();  // 열지 못한 폴더도 기억해서 시작 화면에서 파일을 고를 수 있게
+      D.render();
+      throw e;
+    }
     await D.refreshState();
     D.navBadges = {};
-    D.toast("대회 폴더를 열었습니다.");
+    const notes = (D.project().notices || []).join(" ");
+    D.toast("대회 폴더를 열었습니다." + (notes ? " " + notes : ""), notes ? "warn" : "ok", notes ? 7000 : 3200);
     D.go("overview");
   };
 

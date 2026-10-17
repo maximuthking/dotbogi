@@ -89,7 +89,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _token_ok(self, query) -> bool:
         tok = self.headers.get("X-Dotbogi-Token") or (query.get("t") or [""])[0]
-        return secrets.compare_digest(tok, TOKEN)
+        return secrets.compare_digest(tok.encode("utf-8", "replace"), TOKEN.encode("utf-8"))
 
     def do_GET(self):
         self._handle("GET")
@@ -172,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
         if rel.startswith("static/"):
             rel = rel[len("static/"):]
         f = (STATIC / rel).resolve()
-        if not str(f).startswith(str(STATIC.resolve())) or not f.is_file():
+        if not f.is_relative_to(STATIC.resolve()) or not f.is_file():
             return self._send(HTTPStatus.NOT_FOUND, "없는 파일입니다".encode("utf-8"), "text/plain; charset=utf-8")
         ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
         if f.suffix == ".js":

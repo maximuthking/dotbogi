@@ -92,7 +92,7 @@ def score(y_true, y_pred):
         s.custom_metric ? D.callout("ok", `지금 '${(proj.metric_info || {}).label || "사용자 지표"}'를 쓰고 있습니다.`) : null,
         h("div", { class: "grid g2 mt8", style: { gap: "12px" } }, field("지표 파일 (.py)", mPath), field("화면 이름", mLabel),
           field("예측 형태", mNeeds), field("방향", h("label", { class: "check" }, mHib, "높을수록 좋음 (파일에 HIGHER_IS_BETTER가 있으면 그것을 따름)"))),
-        h("div", { class: "row mt12" }, h("span", { class: "grow small muted" }, "기본 지표 중 Brier, ECE도 있습니다. 파일은 score(y_true, y_pred) 함수 하나면 됩니다."), mOff, mSave),
+        h("div", { class: "row mt12" }, h("span", { class: "grow small muted" }, "파일은 score(y_true, y_pred) 함수 하나면 됩니다. 등록할 때 예시 데이터로 한 번 불러 확인하고, OOF가 있는 기존 실험은 새 지표로 다시 채점해 보여 줍니다. 기본 지표 중 Brier, ECE도 있습니다."), mOff, mSave),
         h("details", { class: "mt8" }, h("summary", { class: "small", style: { cursor: "pointer" } }, "파일 예시 (데이콘 AUC+Brier 복합 지표)"), h("div", { class: "mt8" }, D.codeBlock(METRIC_TEMPLATE)))));
 
       // 보고서

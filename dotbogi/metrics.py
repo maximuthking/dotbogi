@@ -170,7 +170,11 @@ def register_custom(path: str, task: str, higher_is_better: bool = True, needs: 
     pth = Path(path)
     if not pth.is_file():
         raise ValueError(f"지표 파일이 없습니다: {path}")
+    if pth.suffix.lower() != ".py":
+        raise ValueError("파이썬(.py) 파일만 등록할 수 있습니다.")
     spec = importlib.util.spec_from_file_location(f"dotbogi_custom_metric_{abs(hash(str(pth)))}", pth)
+    if spec is None or spec.loader is None:
+        raise ValueError("지표 파일을 불러오지 못했습니다.")
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)
@@ -181,6 +185,24 @@ def register_custom(path: str, task: str, higher_is_better: bool = True, needs: 
         raise ValueError("지표 파일에 score(y_true, y_pred) 함수가 없습니다.")
     if needs not in ("proba", "label", "value"):
         needs = "value" if task == "regression" else "proba"
+    # 등록하기 전에 작은 예시로 한 번 불러 본다 (항상 오류 나는 함수를 막기 위해)
+    if task == "binary":
+        ty, tp = np.array([0, 1, 0, 1, 1, 0], float), np.array([0.2, 0.7, 0.4, 0.9, 0.6, 0.3])
+        if needs == "label":
+            tp = (tp >= 0.5).astype(float)
+    elif task == "multiclass":
+        ty = np.array([0, 1, 2, 0, 1, 2])
+        tp = np.array([[.7, .2, .1], [.2, .6, .2], [.1, .2, .7], [.5, .3, .2], [.3, .4, .3], [.2, .2, .6]])
+        if needs == "label":
+            tp = tp.argmax(axis=1)
+    else:
+        ty, tp = np.array([1.0, 2.0, 3.0, 4.0]), np.array([1.1, 1.9, 3.2, 3.7])
+    try:
+        trial = float(fn(ty, tp))
+    except Exception as e:
+        raise ValueError(f"score 함수를 예시 데이터로 불러 봤더니 오류가 났습니다: {type(e).__name__}: {e}") from e
+    if not np.isfinite(trial):
+        raise ValueError("score 함수가 예시 데이터에서 숫자가 아닌 값(NaN·무한대)을 돌려줬습니다.")
     m = Metric(CUSTOM_KEY, label or getattr(mod, "NAME", None) or f"사용자 지표 ({pth.name})", (task,),
                bool(getattr(mod, "HIGHER_IS_BETTER", higher_is_better)), needs,
                lambda y, p: float(fn(y, p)), f"{pth.name}의 score 함수")

@@ -81,9 +81,16 @@ class GBM:
         kw = dict(max_iter=self.n_estimators, learning_rate=self.learning_rate,
                   max_leaf_nodes=self.num_leaves, random_state=self.seed,
                   categorical_features=cat_mask if any(cat_mask) else None)
-        # 검증 세트를 따로 줄 수 없어서 내부 10%로 조기 종료
-        if early_stopping:
+        # 검증 세트를 따로 줄 수 없어서 내부 10%로 조기 종료.
+        # 단, 행이 아주 적은 클래스가 있으면 내부 층화 분할이 실패하므로 조기 종료 없이 반복 수를 줄인다.
+        small_class = False
+        if self.task != "regression":
+            _, cnt = np.unique(np.asarray(y), return_counts=True)
+            small_class = bool(cnt.min() < 10)
+        if early_stopping and not small_class:
             kw.update(early_stopping=True, n_iter_no_change=early_stopping, validation_fraction=0.1)
+        else:
+            kw.update(early_stopping=False, max_iter=min(self.n_estimators, 200))
         if self.task == "regression":
             model = HistGradientBoostingRegressor(**kw)
         else:

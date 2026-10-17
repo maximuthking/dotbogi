@@ -133,10 +133,18 @@ def infer_kind(s: pd.Series, name: str | None = None) -> tuple[str, bool, str]:
         sample = nonnull.sample(min(n, 2000), random_state=0).astype(str)
         avg_len = float(sample.str.len().mean())
         avg_words = float(sample.str.count(r"\s+").mean()) + 1
+        hangul = float(sample.str.count(r"[가-힣]").sum() / max(sample.str.len().sum(), 1))
         if nunique == 2:
             return "binary", False, ""
-        if uniq_ratio > 0.5 and avg_len >= 25 and avg_words >= 4:
+        # 문장: 대부분 다르고 여러 단어. 한글은 글자 수가 적어도 문장일 수 있어 기준을 따로 둔다.
+        if uniq_ratio > 0.5 and ((avg_len >= 25 and avg_words >= 4) or (hangul > 0.3 and avg_len >= 8 and avg_words >= 2.5)):
             return "text", False, "길고 대부분 다른 문장"
+        digits_only = sample.str.strip().str.fullmatch(r"\d+").mean()
+        numeric_like = pd.to_numeric(sample.str.replace(",", "", regex=False).str.strip(), errors="coerce").notna().mean()
+        if uniq_ratio > 0.98 and digits_only > 0.98:
+            return "id", False, "숫자 코드 문자열(앞자리 0 등)이라 ID로 판단"
+        if numeric_like >= 0.9:
+            return "categorical", False, "숫자로 읽히는 문자 (숫자로 바꿀지 확인)"
         if uniq_ratio > 0.98 and (is_id_name(name) or (avg_words < 1.5 and n > 50)):
             return "id", False, "거의 모든 값이 달라 ID로 판단"
         return "categorical", False, "고유값이 많음" if nunique > 50 else ""
@@ -199,14 +207,13 @@ def guess_competition(train: pd.DataFrame, test: pd.DataFrame | None,
             g.target = direct
             g.reasons.append(f"sample_submission의 예측 컬럼 {direct}이(가) train에도 있어 타깃으로 봤습니다.")
         elif len(only_train) >= 1 and len(sub_cols) > 1:
-            # 클래스별 확률 컬럼 형식 (예: 제출 컬럼이 클래스 이름)
+            # 클래스별 확률 컬럼 형식 (예: 제출 컬럼이 클래스 이름, 또는 'Status_C'처럼 접두사가 붙음)
             for t in only_train:
-                values = set(map(str, train[t].dropna().unique()))
-                if set(map(str, sub_cols)) <= values or (
-                        len(sub_cols) == len(values) and len(values) <= 200):
+                matched = match_proba_columns(sub_cols, list(train[t].dropna().unique()))
+                if matched is not None:
                     g.target = [t]
                     g.submission_format = "proba_columns"
-                    proba_classes = list(sub_cols)
+                    proba_classes = matched
                     g.reasons.append(
                         f"제출 파일이 클래스별 확률 컬럼 {len(sub_cols)}개라서 '{t}'의 다중분류로 봤습니다.")
                     break
@@ -227,6 +234,11 @@ def guess_competition(train: pd.DataFrame, test: pd.DataFrame | None,
         y = train[t].dropna()
         k = kinds[t].kind if t in kinds else infer_kind(y, t)[0]
         nunq = int(y.nunique())
+        if nunq <= 1:
+            g.task = "binary"
+            g.classes = [plain(v) for v in y.unique()]
+            g.reasons.append(f"타깃 '{t}'의 값이 하나뿐입니다. 이대로는 모델을 학습할 수 없으니 타깃 컬럼이 맞는지 확인하세요.")
+            return g
         if g.submission_format == "proba_columns":
             g.task = "multiclass"
         elif k == "binary":
@@ -242,6 +254,41 @@ def guess_competition(train: pd.DataFrame, test: pd.DataFrame | None,
                           "multiclass": f"타깃 값이 {nunq}가지라 다중분류로 봤습니다.",
                           "regression": "타깃이 연속된 숫자라 회귀로 봤습니다."}[g.task])
     return g
+
+
+def match_proba_columns(sub_cols: list, values: list) -> list | None:
+    """제출 컬럼 이름을 타깃 값과 짝짓는다. 'C' ↔ 'C', 'Status_C' ↔ 'C', 'class_1' ↔ 1 처럼.
+    모든 컬럼이 서로 다른 값과 짝지어지면 (제출 컬럼 순서의) 타깃 값 목록, 아니면 None."""
+    if len(sub_cols) < 2 or len(values) > 500:
+        return None
+    norm = lambda x: str(plain(x)).strip().lower()
+    by_norm = {}
+    for v in values:
+        by_norm.setdefault(norm(v), plain(v))
+
+    def find(col):
+        c = str(col).strip()
+        cands = [c]
+        for sep in ("_", "-", ".", " ", ":"):
+            if sep in c:
+                cands.append(c.split(sep, 1)[1])
+                cands.append(c.rsplit(sep, 1)[1])
+        for cand in cands:
+            key = cand.strip().lower()
+            if key in by_norm:
+                return by_norm[key]
+            try:  # '1.0' ↔ 1
+                f = float(key)
+                if f.is_integer() and str(int(f)) in by_norm:
+                    return by_norm[str(int(f))]
+            except ValueError:
+                pass
+        return None
+
+    out = [find(c) for c in sub_cols]
+    if any(v is None for v in out) or len({norm(v) for v in out}) != len(out):
+        return None
+    return out
 
 
 def _is_float_sub(sample_sub: pd.DataFrame | None, t: str) -> bool:

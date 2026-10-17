@@ -22,21 +22,28 @@ def _item(cid, level, title, detail, columns=None, action=None, data=None):
 def run_checks(train: pd.DataFrame, test: pd.DataFrame | None, sample_sub: pd.DataFrame | None,
                columns: list, target: list[str], id_col: str | None, task: str,
                y: np.ndarray | None, y_mask: np.ndarray | None, profiles: dict | None = None,
-               progress=None) -> list[dict]:
-    """profiles: {컬럼명: profile_column 결과} 가 있으면 다시 계산하지 않고 재사용."""
+               progress=None, excluded: list[str] | None = None) -> list[dict]:
+    """profiles: {컬럼명: profile_column 결과} 가 있으면 다시 계산하지 않고 재사용.
+    excluded: 사용자가 모델에서 뺀 컬럼 (누수·분포 점검에서 빼고 따로 알려 준다)"""
     items: list[dict] = []
     info = {c.name: c for c in columns}
-    feats = [c for c in columns if c.name not in target and c.name != id_col]
+    excluded = [c for c in (excluded or []) if c in info]
+    all_feats = [c for c in columns if c.name not in target and c.name != id_col]
+    feats = [c for c in all_feats if c.name not in excluded]
     profiles = profiles or {}
+    if excluded:
+        items.append(_item("excluded", "info", f"모델에서 뺀 컬럼 {len(excluded)}개는 점검에서도 뺐습니다",
+                           "누수·분포 차이 같은 점검은 남은 컬럼으로만 했습니다. 다시 넣으려면 컬럼 화면이나 설정에서 넣으세요.",
+                           columns=excluded))
 
     def step(frac, msg):
         if progress:
             progress(frac, msg)
 
     step(0.05, "중복 행 확인")
-    items += _check_duplicates(train, test, feats, target)
+    items += _check_duplicates(train, test, all_feats, target)
     step(0.25, "train-test 겹침 확인")
-    items += _check_overlap(train, test, feats, target, task)
+    items += _check_overlap(train, test, all_feats, target, task)
     step(0.4, "컬럼 구성 확인")
     items += _check_column_sets(train, test, target, id_col)
     items += _check_sample_sub(test, sample_sub, id_col, train)
@@ -69,12 +76,15 @@ def _check_duplicates(train, test, feats, target):
     names = [c.name for c in feats if c.in_train]
     if not names:
         return out
-    full_dup = int(train.duplicated().sum())
+    # ID처럼 행마다 다른 컬럼은 빼고, 입력값(+타깃)이 같은 행을 센다
+    key_cols = names + [t for t in target if t in train.columns]
+    full_dup = int(train.duplicated(subset=key_cols).sum())
     if full_dup:
-        out.append(_item("dup_rows", "warn", f"train에 완전히 같은 행이 {full_dup:,}개 있습니다",
-                         f"전체의 {full_dup / len(train):.2%}입니다. K-Fold에서 같은 행이 학습·검증에 나뉘면 "
-                         "검증 점수가 부풀려질 수 있습니다.",
-                         action="중복을 지우거나, 같은 행이 한 폴드에만 들어가도록 그룹 K-Fold를 쓰세요."))
+        out.append(_item("dup_rows", "warn", f"train에 ID만 빼면 똑같은 행이 {full_dup:,}개 있습니다",
+                         f"전체의 {full_dup / len(train):.2%}입니다(입력값과 타깃이 모두 같음). K-Fold에서 같은 행이 "
+                         "학습·검증에 나뉘면 검증 점수가 부풀려질 수 있습니다.",
+                         action="중복을 지우거나, 같은 행이 한 폴드에만 들어가도록 그룹 K-Fold를 쓰세요.",
+                         data={"n_dup": full_dup}))
     if target:
         key = train[names]
         dup_mask = key.duplicated(keep=False)
@@ -213,10 +223,13 @@ def _check_dirty_values(train, test, feats):
         s = train[c.name].dropna()
         if s.empty or pd.api.types.is_numeric_dtype(s):
             continue
-        sample = s.sample(min(len(s), 5000), random_state=0).astype(str)
+        sample = s.sample(min(len(s), 5000), random_state=0).astype(str).str.strip()
+        if sample.str.fullmatch(r"\d+").mean() > 0.95 and sample.str.match(r"0\d").any():
+            continue  # '00123' 같은 코드는 숫자로 바꾸면 안 된다
         parsed = pd.to_numeric(sample.str.replace(",", "", regex=False), errors="coerce")
         rate = float(parsed.notna().mean())
-        if 0.9 <= rate < 1.0 or (rate == 1.0 and c.n_unique > 30):
+        has_commas = bool(sample.str.fullmatch(r"-?\d{1,3}(,\d{3})+(\.\d+)?").any())
+        if 0.9 <= rate < 1.0 or (rate == 1.0 and (c.n_unique > 30 or has_commas)):
             bad = sample[parsed.isna()].unique()[:3].tolist()
             numeric_like.append((c.name, rate, bad))
         uniq = pd.Series(s.unique()).astype(str)
@@ -248,6 +261,11 @@ def _check_target(train, target, task, y, y_mask):
         out.append(_item("target_missing", "warn", f"타깃이 비어 있는 train 행이 {miss:,}개 있습니다",
                          "학습할 때 빼야 합니다. 일부러 비워 둔 준지도 학습용 데이터일 수도 있습니다.", columns=[t]))
     yy = y[y_mask] if y_mask is not None else y
+    if len(yy) and len(np.unique(yy)) <= 1:
+        out.append(_item("target_constant", "danger", "타깃 값이 하나뿐입니다",
+                         f"'{t}'의 모든 행이 같은 값이라 모델이 배울 것이 없습니다. 타깃 컬럼을 잘못 골랐는지 확인하세요.",
+                         columns=[t], action="개요에서 올바른 타깃을 고르세요."))
+        return out
     if task == "binary" and len(yy):
         pos = float(yy.mean())
         minority = min(pos, 1 - pos)
@@ -301,12 +319,21 @@ def _check_leaks(train, feats, id_col, info, task, y, y_mask, profiles):
     # 행 순서·ID에 타깃 정보가 있는지
     order_scores = {}
     order_codes = quantile_codes(np.arange(len(train), dtype="float64"), 20)[0]
-    order_scores["행 순서"] = oof_power(order_codes[m], yy, task)
+    order_scores["행 순서"] = (oof_power(order_codes[m], yy, task), order_codes[m])
     if id_col and id_col in train.columns:
-        idv = to_float(train[id_col]) if pd.api.types.is_numeric_dtype(train[id_col]) else None
+        idv = _id_as_number(train[id_col])
         if idv is not None and np.isfinite(idv).any():
-            order_scores[f"ID({id_col})"] = oof_power(quantile_codes(idv, 20)[0][m], yy, task)
-    leaky = {k: v for k, v in order_scores.items() if v.get("power") is not None and v["power"] > 0.1}
+            codes = quantile_codes(idv, 20)[0][m]
+            order_scores[f"ID({id_col})"] = (oof_power(codes, yy, task), codes)
+    leaky = {}
+    for k, (v, codes) in order_scores.items():
+        if v.get("power") is None or v["power"] <= 0.05:
+            continue
+        # 우연히 나오는 정도: 타깃을 섞어서 같은 계산을 해 본 값보다 확실히 커야 누수로 본다
+        rng = np.random.default_rng(7)
+        null = [oof_power(codes, rng.permutation(yy), task).get("power") or 0.0 for _ in range(5)]
+        if v["power"] > max(0.1, float(np.mean(null)) + 4 * float(np.std(null)) + 0.02):
+            leaky[k] = v
     if leaky:
         detail = ", ".join(f"{k}: {v['metric'].upper()} {v['value']:.3f}" for k, v in leaky.items())
         out.append(_item("order_leak", "warn", "행 순서나 ID만으로 타깃이 어느 정도 맞춰집니다",
@@ -315,6 +342,17 @@ def _check_leaks(train, feats, id_col, info, task, y, y_mask, profiles):
                          columns=[id_col] if id_col else [],
                          action="K-Fold에 shuffle=True를 쓰고, 시간 순서라면 시간 기준 검증을 고려하세요."))
     return out
+
+
+def _id_as_number(s: pd.Series):
+    """ID를 순서를 가진 숫자로: 숫자면 그대로, 'TRAIN_000123'처럼 숫자가 들어 있으면 그 숫자, 아니면 정렬 순위."""
+    if pd.api.types.is_numeric_dtype(s):
+        return to_float(s)
+    st = s.astype("string")
+    num = pd.to_numeric(st.str.extract(r"(\d+)(?!.*\d)", expand=False), errors="coerce")
+    if num.notna().mean() > 0.9:
+        return num.to_numpy(dtype="float64", na_value=np.nan)
+    return st.rank(method="dense").to_numpy(dtype="float64", na_value=np.nan)
 
 
 def _check_drift(feats, profiles):

@@ -27,6 +27,12 @@
       },
     };
   }
+  /* 비율 축 눈금: 최댓값이 작으면 소수 자릿수를 늘려 '3%, 3%' 같은 중복을 막는다 */
+  function pctAxisFmt(maxVal) {
+    const d = maxVal < 0.02 ? 2 : maxVal < 0.2 ? 1 : 0;
+    return (v) => (v * 100).toFixed(d) + "%";
+  }
+  function arrMax(...arrs) { let m = 0; arrs.forEach((a) => (a || []).forEach((v) => { if (v > m) m = v; })); return m; }
   function axis(p, extra) {
     return Object.assign({
       axisLine: { lineStyle: { color: p.border } }, axisTick: { show: false },
@@ -94,8 +100,9 @@
         const i = ps[0].dataIndex;
         return `<b>${D.esc(tip(i))}</b><br>` + ps.map((s) => `${s.marker}${s.seriesName} ${f.pct(s.value, 2)}`).join("<br>");
       };
-      if (dist.train) series.push({ name: "train", type: "bar", data: dist.train, barGap: "-100%", barCategoryGap: "4%", itemStyle: { color: p.train, opacity: 0.55 } });
-      if (dist.test) series.push({ name: "test", type: "bar", data: dist.test, barGap: "-100%", barCategoryGap: "4%", itemStyle: { color: p.test, opacity: 0.5 } });
+      if (dist.train) series.push({ name: "train", type: "bar", data: dist.train, barGap: "-100%", barCategoryGap: "4%", itemStyle: { color: p.train, opacity: 0.6 } });
+      if (dist.test) series.push({ name: "test", type: "bar", data: dist.test, barGap: "-100%", barCategoryGap: "4%", z: 3,
+        itemStyle: { color: "rgba(0,0,0,0)", borderColor: p.test, borderWidth: 1.6 } });
     } else {
       cats = dist.categories;
       o.tooltip.trigger = "axis";
@@ -105,7 +112,7 @@
     }
     o.legend = { show: false };
     o.xAxis = axis(p, { type: "category", data: cats, axisLabel: { color: p.muted, fontSize: 11, hideOverlap: true, rotate: dist.type === "bar" && cats.length > 8 ? 30 : 0, formatter: (v) => (v.length > 14 ? v.slice(0, 13) + "…" : v) } });
-    o.yAxis = axis(p, { type: "value", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.pct(v, 0) } });
+    o.yAxis = axis(p, { type: "value", axisLabel: { color: p.muted, fontSize: 11, formatter: pctAxisFmt(arrMax(dist.train, dist.test)) } });
     if (dist.type === "bar" && cats.length > 8) o.grid.bottom = 70;
     o.series = series;
     return make(el, o);
@@ -151,7 +158,8 @@
     ];
     o.series = [
       { name: "행 수", type: "bar", yAxisIndex: 1, data: tg.groups.map((g) => g.count), itemStyle: { color: p.surface3 }, barMaxWidth: 34, z: 1 },
-      { name: isBin ? "양성 비율" : "타깃 평균", type: "line", data: vals, symbolSize: 7, lineStyle: { width: 2.4, color: p.primary }, itemStyle: { color: p.primary }, z: 3,
+      { name: isBin ? "양성 비율" : "타깃 평균", type: "line", data: vals, symbolSize: 8, z: 3, itemStyle: { color: p.primary },
+        lineStyle: { width: tg.groups.every((g) => g.label_type !== "range") ? 0 : 2.4, color: p.primary },
         markLine: tg.overall !== null && tg.overall !== undefined ? { silent: true, symbol: "none", lineStyle: { color: p.muted, type: "dashed" },
           label: { formatter: "전체 " + (isBin ? f.pct(tg.overall, 1) : f.num(tg.overall, 4)), color: p.muted, fontSize: 11, position: "insideEndTop" },
           data: [{ yAxis: tg.overall }] } : undefined },
@@ -263,12 +271,13 @@
     const o = base(p);
     const data = [];
     let max = 1;
-    r.values.forEach((row, i) => row.forEach((v, j) => { data.push([j, i, v]); max = Math.max(max, v); }));
+    r.values.forEach((row, i) => row.forEach((v, j) => { data.push([i, j, v]); max = Math.max(max, v); }));
     o.grid = { left: 120, right: 70, top: 10, bottom: 80 };
-    o.xAxis = axis(p, { type: "category", data: r.ys, name: r.y, axisLabel: { color: p.text2, fontSize: 11, rotate: 30 } });
-    o.yAxis = axis(p, { type: "category", data: r.xs, name: r.x, axisLabel: { color: p.text2, fontSize: 11 } });
+    o.xAxis = axis(p, { type: "category", data: r.xs, name: r.x, nameLocation: "middle", nameGap: 56, axisLabel: { color: p.text2, fontSize: 11, rotate: 30 } });
+    o.yAxis = axis(p, { type: "category", data: r.ys, name: r.y, axisLabel: { color: p.text2, fontSize: 11 } });
+    o.tooltip.formatter = (s) => D.esc(r.x) + ": " + D.esc(r.xs[s.value[0]]) + "<br>" + D.esc(r.y) + ": " + D.esc(r.ys[s.value[1]]) + "<br><b>" + f.int(s.value[2]) + "행</b>";
     o.visualMap = { min: 0, max, right: 6, top: "middle", itemHeight: 140, inRange: { color: ["#f1f4f9", "#2f6fdf"] }, textStyle: { color: p.muted } };
-    o.series = [{ type: "heatmap", data, label: { show: r.xs.length * r.ys.length <= 120, fontSize: 10, color: "#111" } }];
+    o.series = [{ type: "heatmap", data, label: { show: r.xs.length * r.ys.length <= 120, fontSize: 10, color: "#111", formatter: (s) => f.int(s.value[2]) } }];
     return make(el, o);
   };
 
@@ -336,14 +345,14 @@
   };
 
   /* 폴드별 막대 */
-  C.folds = function (el, rows, key, label, fmtFn) {
+  C.folds = function (el, rows, key, label, fmtFn, isRate) {
     const p = palette();
     const o = base(p);
     const vis = rows.filter((r) => r.fold >= 0);
     o.grid = { left: 60, right: 54, top: 26, bottom: 34 };
     o.xAxis = axis(p, { type: "category", data: vis.map((r) => "폴드 " + r.fold) });
     o.yAxis = [axis(p, { type: "value", name: "행 수", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } }),
-      axis(p, { type: "value", name: label || "", splitLine: { show: false }, scale: true, axisLabel: { color: p.muted, fontSize: 11, formatter: fmtFn || ((v) => f.num(v, 3)) } })];
+      axis(p, { type: "value", name: label || "", splitLine: { show: false }, scale: !isRate, min: isRate ? 0 : undefined, max: isRate ? 1 : undefined, axisLabel: { color: p.muted, fontSize: 11, formatter: fmtFn || ((v) => f.num(v, 3)) } })];
     o.tooltip.trigger = "axis";
     o.series = [{ name: "행 수", type: "bar", data: vis.map((r) => r.rows), barMaxWidth: 40, itemStyle: { color: p.surface3 } }];
     if (key) o.series.push({ name: label, type: "line", yAxisIndex: 1, data: vis.map((r) => r[key]), symbolSize: 7, itemStyle: { color: p.primary }, lineStyle: { color: p.primary } });

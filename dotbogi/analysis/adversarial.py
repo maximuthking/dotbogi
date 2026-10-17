@@ -11,16 +11,19 @@ from .features import Matrix
 from .gbm import GBM, permutation_importance
 
 
-def interpret_auc(auc: float) -> tuple[str, str]:
+def interpret_auc(auc: float, top: list[str] | None = None) -> tuple[str, str]:
+    names = ", ".join(f"'{t}'" for t in (top or [])[:3])
+    who = f" 가장 크게 가르는 컬럼은 {names}입니다." if names else ""
     if auc < 0.55:
         return "same", "train과 test가 거의 구분되지 않습니다. 일반적인 무작위 K-Fold 검증 점수를 믿어도 됩니다."
     if auc < 0.65:
-        return "slight", "약간 다릅니다. 상위 컬럼의 분포 차이를 확인하고, 검증 점수와 리더보드 차이를 지켜보세요."
+        return "slight", "약간 다릅니다." + who + " 그 컬럼의 분포 차이를 확인하고, 검증 점수와 리더보드 차이를 지켜보세요."
     if auc < 0.8:
-        return "moderate", ("꽤 다릅니다. 차이를 만드는 컬럼을 빼거나 변환해 보고, test와 비슷한 train 행으로 "
-                            "검증 세트를 만드는 것을 고려하세요.")
-    return "large", ("train과 test가 쉽게 구분됩니다. 시간·그룹 단위로 나뉜 데이터일 가능성이 큽니다. "
-                     "무작위 K-Fold 점수는 리더보드보다 낙관적일 수 있으니 시간/그룹 기준 검증을 쓰세요.")
+        return "moderate", ("꽤 다릅니다." + who + " 그 컬럼을 빼거나 변환해 다시 실행해 보고, test와 비슷한 train 행으로 "
+                            "검증 세트를 만드는 것도 고려하세요.")
+    return "large", ("train과 test가 쉽게 구분됩니다." + who + " 날짜·ID·그룹 컬럼이 원인이면 데이터 점검의 시간·그룹 항목대로 "
+                     "그 기준으로 검증하고, 일반 컬럼의 분포 차이가 원인이면 그 컬럼을 빼거나 변환해 보세요. "
+                     "이 상태에서 무작위 K-Fold 점수는 리더보드보다 낙관적일 수 있습니다.")
 
 
 def run_adversarial(mat: Matrix, n_folds: int = 5, max_rows_each: int = 100_000, seed: int = 42,
@@ -87,7 +90,8 @@ def run_adversarial(mat: Matrix, n_folds: int = 5, max_rows_each: int = 100_000,
             Xp = mat.train.iloc[part]
             p_train[part] = np.mean([m.predict(Xp) for m in models], axis=0)
 
-    level, advice = interpret_auc(auc)
+    top_names = [c for c in sorted(mat.features, key=lambda c: -imp_mean[c]) if imp_mean[c] > 0.05][:3]
+    level, advice = interpret_auc(auc, top_names)
     p_te = oof[len(tr_idx):]
     bins = np.linspace(0, 1, 41)
     feats = sorted(mat.features, key=lambda c: -imp_mean[c])

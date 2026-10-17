@@ -63,7 +63,7 @@ def read_table(path: str | os.PathLike, nrows: int | None = None,
     cache_path = None
     if cache_dir is not None and nrows is None and ext in {".csv", ".tsv", ".txt"} \
             and path.stat().st_size > 5_000_000:
-        cache_path = Path(cache_dir) / f"{path.stem}-{file_signature(path)}.parquet"
+        cache_path = Path(cache_dir) / f"{path.stem}-{file_signature(path)}-v2.parquet"
         if cache_path.exists():
             try:
                 return pd.read_parquet(cache_path)
@@ -108,13 +108,38 @@ def read_table(path: str | os.PathLike, nrows: int | None = None,
 def _read_csv(path: Path, nrows: int | None) -> pd.DataFrame:
     enc = detect_encoding(path)
     sep = _sniff_sep(path, enc)
-    if enc == "utf-8" and nrows is None and sep == ",":
+    if path.stat().st_size == 0:
+        raise LoadError(f"{path.name}이(가) 빈 파일입니다.")
+    text_cols = _text_number_columns(path, enc, sep)
+    dtype = {c: "string" for c in text_cols} or None
+    # pyarrow 엔진은 문자열 지정을 읽은 뒤에 적용해 앞자리 0이 이미 사라지므로, 그런 컬럼이 있으면 기본 엔진으로
+    if enc == "utf-8" and nrows is None and sep == "," and not text_cols:
         try:
-            return pd.read_csv(path, engine="pyarrow")
+            return pd.read_csv(path, engine="pyarrow", dtype=dtype)
         except Exception:
             pass  # pyarrow 엔진이 못 읽는 파일(따옴표 줄바꿈 등)은 기본 엔진으로
     return pd.read_csv(path, encoding=enc, sep=sep, nrows=nrows, low_memory=False,
-                       encoding_errors="replace")
+                       encoding_errors="replace", dtype=dtype)
+
+
+def _text_number_columns(path: Path, enc: str, sep: str, probe_rows: int = 5000) -> list[str]:
+    """숫자처럼 보이지만 문자열로 읽어야 하는 컬럼: '002000'처럼 앞자리 0이 있는 정수 코드·ID.
+    숫자로 읽으면 0이 사라져 제출 파일의 ID가 틀어진다."""
+    try:
+        head = pd.read_csv(path, encoding=enc, sep=sep, nrows=probe_rows, dtype=str, keep_default_na=False,
+                           encoding_errors="replace")
+    except Exception:
+        return []
+    out = []
+    for c in head.columns:
+        s = head[c].astype(str).str.strip()
+        s = s[s != ""]
+        if s.empty:
+            continue
+        digits = s.str.fullmatch(r"\d+")
+        if digits.mean() > 0.95 and s[digits].str.match(r"0\d").any():
+            out.append(str(c))
+    return out
 
 
 def _dedupe_columns(df: pd.DataFrame) -> None:

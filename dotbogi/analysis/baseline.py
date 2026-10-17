@@ -35,6 +35,11 @@ def run_baseline(mat: Matrix, y: np.ndarray, y_mask: np.ndarray, task: str, n_cl
         tr_idx = np.flatnonzero(tr)
         es_idx = _early_stop_rows(tr_idx, fold, k, strategy, seed + k)
         fit_idx = np.setdiff1d(tr_idx, es_idx, assume_unique=True) if es_idx is not None else tr_idx
+        if es_idx is not None and task in ("binary", "multiclass"):
+            # 조기 종료용 행에 학습 행에는 없는 클래스가 있으면 LightGBM이 멈추므로 뺀다
+            es_idx = es_idx[np.isin(yfit[es_idx], np.unique(yfit[fit_idx]))]
+            if len(es_idx) < 20:
+                es_idx, fit_idx = None, tr_idx
         m = GBM(task, n_classes=n_classes, engine=engine, seed=seed + k,
                 n_estimators=n_estimators, learning_rate=learning_rate)
         if es_idx is not None and m.engine == "lightgbm":

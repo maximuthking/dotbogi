@@ -23,6 +23,7 @@ class Job:
         self.detail: str | None = None
         self.started = time.time()
         self.finished: float | None = None
+        self.key: str | None = None
 
     def update(self, progress: float, message: str | None = None) -> None:
         self.progress = max(0.0, min(1.0, float(progress)))
@@ -44,13 +45,16 @@ class JobManager:
         self.jobs: dict[str, Job] = {}
         self.lock = threading.Lock()
 
-    def submit(self, kind: str, label: str, fn, *args, **kwargs) -> Job:
-        """같은 종류의 작업이 돌고 있으면 새로 만들지 않고 그걸 돌려준다."""
+    def submit(self, kind: str, label: str, fn, *args, key: str | None = None, **kwargs) -> Job:
+        """같은 종류·같은 조건의 작업이 돌고 있으면 그걸 돌려주고, 조건이 다르면 끝날 때까지 기다리라고 알린다."""
         with self.lock:
             for j in self.jobs.values():
                 if j.kind == kind and j.state == "running":
-                    return j
+                    if j.key == key:
+                        return j
+                    raise LoadError(f"'{j.label}' 작업이 아직 진행 중입니다. 끝난 뒤 다시 해 주세요.")
             job = Job(kind, label)
+            job.key = key
             self.jobs[job.id] = job
             self._trim()
 
@@ -75,6 +79,12 @@ class JobManager:
 
         self.pool.submit(run)
         return job
+
+    def get_running(self, kind: str) -> Job | None:
+        for j in self.jobs.values():
+            if j.kind == kind and j.state == "running":
+                return j
+        return None
 
     def get(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)

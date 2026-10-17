@@ -41,8 +41,12 @@
         { key: "kind", label: "종류", render: (r) => D.kindBadge(r.kind) },
         { key: "missing_train", label: "결측", num: true, title: "train 결측 비율 (test)", render: (r) => h("span", { title: `train ${f.pct(r.missing_train, 2)} · test ${f.pct(r.missing_test, 2)}` },
           f.pct(r.missing_train, 0), hasTest && r.missing_test !== null && Math.abs((r.missing_test || 0) - (r.missing_train || 0)) > 0.05 ? h("span", { class: "faint" }, " / " + f.pct(r.missing_test, 0)) : null) },
-        hasTarget ? { key: "power", label: "예측력", title: "컬럼 하나로 타깃을 맞히는 정도 (0~100, 다른 폴드로 잰 값)", render: (r) => r.role === "feature" ? D.barCell(r.power, maxPower, (r.power_metric === "r2" ? r.power_value >= 0.9 : r.power_value >= 0.97)) : h("span", { class: "faint" }, "–") } : null,
-        hasTest ? { key: "psi", label: "분포 차이", num: true, title: "PSI: 0.1 미만 안정, 0.25 이상 많이 다름", render: (r) => r.psi === null || r.psi === undefined ? h("span", { class: "faint" }, "–") : h("span", { class: "badge " + (D.DRIFT_CLASS[r.drift] || "") }, f.num(r.psi, 2)) } : null,
+        hasTarget ? { key: "power", label: "예측력", title: "컬럼 하나로 타깃을 맞히는 정도 (0~100, 다른 폴드로 잰 값)", render: (r) => r.role === "feature" && r.kind !== "constant" ? D.barCell(r.power, maxPower, (r.power_metric === "r2" ? r.power_value >= 0.9 : r.power_value >= 0.97)) : h("span", { class: "faint" }, "–") } : null,
+        hasTest ? { key: "psi", label: "분포 차이", num: true, title: "PSI: 0.1 미만 안정, 0.25 이상 많이 다름. 고유값이 많은 범주는 test의 새 범주 비율로 판정",
+          sortValue: (r) => (r.role !== "feature" ? null : r.drift_basis === "unseen" ? r.unseen_rate : r.psi),
+          render: (r) => r.role !== "feature" || r.psi === null || r.psi === undefined ? h("span", { class: "faint" }, "–")
+            : r.drift_basis === "unseen" ? h("span", { class: "badge " + (D.DRIFT_CLASS[r.drift] || ""), title: "test 행 중 처음 보는 범주 비율" }, "새 " + f.pct(r.unseen_rate, 0))
+            : h("span", { class: "badge " + (D.DRIFT_CLASS[r.drift] || "") }, r.psi < 0.001 ? "<0.001" : r.psi.toFixed(r.psi < 0.1 ? 3 : 2)) } : null,
       ].filter(Boolean);
       const listBox = h("div");
       const list = h("div", { class: "card list" }, h("div", { class: "card-h" }, h("h3", null, "전체 컬럼 " + rows.length + "개")),
@@ -84,13 +88,14 @@
     const hasTest = !!proj.shapes.test;
     // 머리
     const kindSel = D.select(proj.columns.length ? Object.entries(D.KIND_LABEL) : [], c.kind, async (v) => {
-      try { await D.api("/api/settings", { body: { kinds: { [c.name]: v } } }); await D.refreshState(); D.toast(`'${c.name}'을(를) ${D.KIND_LABEL[v]}(으)로 바꿨습니다. 분석을 다시 계산합니다.`); D.render(); }
+      try { await D.api("/api/settings", { body: { kinds: { [c.name]: v } } }); await D.refreshState(); D.navBadges = {}; D.toast(`'${c.name}'의 종류를 '${D.KIND_LABEL[v]}'(으)로 바꿨습니다. 분석을 다시 계산합니다.`); D.render(); }
       catch (e) { D.fail(e); }
     }, { class: "sm", title: "종류 바꾸기" });
     const exBtn = h("button", { class: "btn sm needs-server", onclick: async () => {
       const ex = new Set(s.excluded);
       if (ex.has(c.name)) ex.delete(c.name); else ex.add(c.name);
-      try { await D.api("/api/settings", { body: { excluded: [...ex] } }); await D.refreshState(); D.toast(ex.has(c.name) ? "모델·점검에서 뺐습니다." : "다시 넣었습니다."); D.render(); }
+      try { await D.api("/api/settings", { body: { excluded: [...ex] } }); await D.refreshState(); D.navBadges = {};
+        D.toast(ex.has(c.name) ? `'${c.name}'을(를) 모델 입력에서 뺐습니다. 데이터 점검에는 '뺀 컬럼'으로 따로 표시됩니다.` : `'${c.name}'을(를) 다시 넣었습니다.`); D.render(); }
       catch (e) { D.fail(e); }
     } }, c.excluded ? "다시 넣기" : "모델에서 빼기");
     const pw = c.power;
@@ -101,9 +106,9 @@
         c.kind_overridden ? h("span", { class: "badge info" }, "직접 정한 종류") : null,
         h("span", { class: "grow" }), h("span", { class: "small muted needs-server" }, "종류"), h("span", { class: "needs-server" }, kindSel), exBtn),
       h("div", { class: "row small muted mt8", style: { gap: "14px" } },
-        h("span", null, "자료형 ", h("code", null, c.dtype || "–")), h("span", null, "고유값 ", f.int(c.n_unique)),
+        h("span", null, "자료형 ", h("code", null, c.dtype || "–")), h("span", null, "고유값(train+test) ", f.int(c.n_unique)),
         !c.in_test && hasTest ? h("span", { class: "badge warn" }, "test에 없음") : null, !c.in_train ? h("span", { class: "badge warn" }, "train에 없음") : null,
-        c.role === "feature" && pw ? h("span", null, "단일 피처 예측력 ", h("b", { style: { color: "var(--text)" } }, powerText)) : null,
+        c.role === "feature" && pw && c.kind !== "constant" ? h("span", null, "단일 피처 예측력 ", h("b", { style: { color: "var(--text)" } }, powerText)) : null,
         c.note ? h("span", null, c.note) : null),
       c.examples && c.examples.length ? h("div", { class: "row mt8", style: { gap: "6px" } }, h("span", { class: "small muted" }, "값 예시"),
         c.examples.map((v) => h("span", { class: "badge", style: { fontWeight: "500", maxWidth: "200px", overflow: "hidden" } }, v))) : null)));

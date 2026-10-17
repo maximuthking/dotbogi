@@ -30,33 +30,91 @@ def slug(name: str) -> str:
     return s[:40] or "exp"
 
 
+class LedgerLock:
+    """여러 프로세스(화면 서버와 학습 스크립트)가 같은 대장을 동시에 고쳐도 기록이 사라지지 않게 하는 잠금 파일."""
+
+    def __init__(self, path: Path, timeout: float = 30.0, stale: float = 60.0):
+        self.path, self.timeout, self.stale = path, timeout, stale
+        self.fd = None
+
+    def __enter__(self):
+        import time
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        while True:
+            try:
+                self.fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                try:  # 죽은 프로세스가 남긴 오래된 잠금은 치운다
+                    if time.time() - self.path.stat().st_mtime > self.stale:
+                        self.path.unlink()
+                        continue
+                except OSError:
+                    pass
+                if time.time() - t0 > self.timeout:
+                    raise TimeoutError("실험 대장을 다른 프로그램이 쓰고 있어 기다리다 멈췄습니다. 잠시 뒤 다시 해 보세요.")
+                time.sleep(0.02)
+            except PermissionError:
+                if time.time() - t0 > self.timeout:
+                    raise
+                time.sleep(0.02)
+
+    def __exit__(self, *exc):
+        try:
+            if self.fd is not None:
+                os.close(self.fd)
+            self.path.unlink()
+        except OSError:
+            pass
+
+
 class Ledger:
     def __init__(self, store_dir: str | os.PathLike):
         self.dir = Path(store_dir)
         self.path = self.dir / "experiments.json"
         self.runs = self.dir / "runs"
+        self.lockfile = self.dir / "experiments.lock"
 
     # ─────────────────────────── 읽기/쓰기
     def load(self) -> list[dict]:
+        import time
         with _LOCK:
             if not self.path.exists():
                 return []
+            raw = None
+            for i in range(30):  # 윈도우에서 다른 프로세스가 바꾸는 순간에는 잠깐 못 읽을 수 있다
+                try:
+                    raw = self.path.read_bytes()
+                    break
+                except PermissionError:
+                    time.sleep(0.02 * (i + 1))
+            if raw is None:
+                raise OSError("실험 대장 파일을 읽지 못했습니다. 다른 프로그램이 잡고 있는지 확인하세요.")
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                # 깨진 파일은 보존하고 빈 목록으로 시작
-                bak = self.path.with_suffix(f".broken-{dt.datetime.now():%Y%m%d%H%M%S}.json")
-                shutil.copy(self.path, bak)
+                data = json.loads(raw.decode("utf-8"))
+                exps = data.get("experiments") if isinstance(data, dict) else data
+                if not isinstance(exps, list):
+                    raise ValueError("목록이 아님")
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, AttributeError):
+                # 깨진 파일은 보존하고 빈 목록으로 시작 (다음 저장 때 새 파일이 된다)
+                bak = self.path.with_name(f"experiments.broken-{dt.datetime.now():%Y%m%d%H%M%S%f}.json")
+                try:
+                    shutil.copy(self.path, bak)
+                except OSError:
+                    pass
                 return []
-            return data.get("experiments", []) if isinstance(data, dict) else data
+            return [_clean(e) for e in exps if isinstance(e, dict) and e.get("id")]
 
     def save(self, exps: list[dict]) -> None:
         with _LOCK:
             self.dir.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
+            tmp = self.dir / f"experiments.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
             tmp.write_text(json.dumps({"version": 1, "experiments": exps}, ensure_ascii=False, indent=1,
                                       default=_json_default), encoding="utf-8")
-            os.replace(tmp, self.path)
+            from .project import _replace_retry
+            _replace_retry(tmp, self.path)
 
     def get(self, exp_id: str) -> dict | None:
         for e in self.load():
@@ -70,56 +128,67 @@ class Ledger:
             source: str = "manual", oof: pd.DataFrame | None = None, test_pred: pd.DataFrame | None = None,
             submission: pd.DataFrame | None = None, submitted_at: str | None = None,
             extra: dict | None = None) -> dict:
-        with _LOCK:
+        exp_id = f"{dt.datetime.now():%m%d%H%M%S}-{uuid.uuid4().hex[:4]}"
+        run_dir = self.runs / exp_id
+        e = {
+            "id": exp_id, "name": (name or "").strip() or exp_id, "created_at": now_iso(), "source": source,
+            "metric": metric, "cv": _num(cv, "CV"), "cv_std": _num(cv_std, "CV 편차"), "fold_scores": fold_scores or [],
+            "lb_public": _num(lb_public, "Public LB"), "lb_private": _num(lb_private, "Private LB"),
+            "submitted_at": submitted_at or (now_iso() if lb_public not in (None, "") else None),
+            "notes": notes or "", "tags": tags or [], "params": params or {},
+            "final": False, "files": {}, **(extra or {}),
+        }
+        # 큰 파일은 잠금 밖에서 먼저 쓴다
+        if oof is not None or test_pred is not None or submission is not None:
+            run_dir.mkdir(parents=True, exist_ok=True)
+        if oof is not None:
+            oof.to_parquet(run_dir / "oof.parquet", index=False)
+            e["files"]["oof"] = "oof.parquet"
+        if test_pred is not None:
+            test_pred.to_parquet(run_dir / "test.parquet", index=False)
+            e["files"]["test"] = "test.parquet"
+        if submission is not None:
+            submission.to_csv(run_dir / "submission.csv", index=False, encoding="utf-8")
+            e["files"]["submission"] = "submission.csv"
+        with _LOCK, LedgerLock(self.lockfile):
             exps = self.load()
-            exp_id = f"{dt.datetime.now():%m%d%H%M%S}-{uuid.uuid4().hex[:4]}"
-            run_dir = self.runs / exp_id
-            e = {
-                "id": exp_id, "name": name or exp_id, "created_at": now_iso(), "source": source,
-                "metric": metric, "cv": _f(cv), "cv_std": _f(cv_std), "fold_scores": fold_scores or [],
-                "lb_public": _f(lb_public), "lb_private": _f(lb_private),
-                "submitted_at": submitted_at or (now_iso() if lb_public is not None else None),
-                "notes": notes or "", "tags": tags or [], "params": params or {},
-                "final": False, "files": {}, **(extra or {}),
-            }
-            if oof is not None or test_pred is not None or submission is not None:
-                run_dir.mkdir(parents=True, exist_ok=True)
-            if oof is not None:
-                oof.to_parquet(run_dir / "oof.parquet", index=False)
-                e["files"]["oof"] = "oof.parquet"
-            if test_pred is not None:
-                test_pred.to_parquet(run_dir / "test.parquet", index=False)
-                e["files"]["test"] = "test.parquet"
-            if submission is not None:
-                submission.to_csv(run_dir / "submission.csv", index=False, encoding="utf-8")
-                e["files"]["submission"] = "submission.csv"
             exps.append(e)
             self.save(exps)
-            return e
+        return e
 
     def update(self, exp_id: str, **fields) -> dict:
         allowed = {"name", "cv", "cv_std", "lb_public", "lb_private", "notes", "tags", "final", "submitted_at",
                    "metric", "params", "kaggle_key"}
-        with _LOCK:
+        labels = {"cv": "CV", "cv_std": "CV 편차", "lb_public": "Public LB", "lb_private": "Private LB"}
+        clean = {}
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            if k in labels:
+                v = _num(v, labels[k])
+            if k == "name":
+                v = str(v or "").strip()
+                if not v:
+                    raise ValueError("실험 이름을 비울 수 없습니다.")
+            if k == "final":
+                v = bool(v)
+            clean[k] = v
+        with _LOCK, LedgerLock(self.lockfile):
             exps = self.load()
             for e in exps:
                 if e["id"] == exp_id:
-                    for k, v in fields.items():
-                        if k not in allowed:
-                            continue
-                        if k in ("cv", "cv_std", "lb_public", "lb_private"):
-                            v = _f(v)
-                        if k == "lb_public" and v is not None and not e.get("submitted_at"):
+                    for k, v in clean.items():
+                        if k == "lb_public" and v is not None and not e.get("submitted_at") and "submitted_at" not in clean:
                             e["submitted_at"] = now_iso()
                         e[k] = v
                     e["updated_at"] = now_iso()
                     self.save(exps)
                     return e
-            raise KeyError(exp_id)
+        raise KeyError(exp_id)
 
     def delete(self, exp_id: str) -> None:
         """기록에서 빼고 파일은 .dotbogi/trash 로 옮긴다 (되살릴 수 있게)."""
-        with _LOCK:
+        with _LOCK, LedgerLock(self.lockfile):
             exps = self.load()
             keep = [e for e in exps if e["id"] != exp_id]
             if len(keep) == len(exps):
@@ -157,6 +226,37 @@ def _f(v):
     except (TypeError, ValueError):
         return None
     return f if np.isfinite(f) else None
+
+
+def _num(v, label: str = "값"):
+    """사용자가 넣은 점수: 비었으면 None, 숫자가 아니면 오류 (조용히 지우지 않게)"""
+    if v is None or (isinstance(v, str) and v.strip() == ""):
+        return None
+    try:
+        f = float(str(v).strip().replace(",", ".")) if isinstance(v, str) else float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}에는 숫자를 적으세요: {v!r}")
+    if not np.isfinite(f):
+        raise ValueError(f"{label}에 무한대나 NaN은 쓸 수 없습니다.")
+    return f
+
+
+def _clean(e: dict) -> dict:
+    """손으로 고친 기록 등 모양이 조금 틀린 항목도 화면이 깨지지 않게 다듬는다."""
+    for k in ("cv", "cv_std", "lb_public", "lb_private"):
+        e[k] = _f(e.get(k))
+    e["name"] = str(e.get("name") or e["id"])
+    e.setdefault("files", {})
+    if not isinstance(e["files"], dict):
+        e["files"] = {}
+    e.setdefault("params", {})
+    e.setdefault("notes", "")
+    e.setdefault("fold_scores", [])
+    if not isinstance(e["fold_scores"], list):
+        e["fold_scores"] = []
+    e.setdefault("final", False)
+    e.setdefault("source", "manual")
+    return e
 
 
 def _json_default(o):
@@ -272,6 +372,7 @@ def cv_lb_analysis(exps: list[dict], metric: str | None) -> dict:
                                  "kind": "lb_lucky" if better_lb else "lb_unlucky"})
             out["outliers"] = outl
         sp = out.get("spearman")
+        out["tentative"] = len(pts) < 5
         if sp is None:
             out["verdict"] = "unknown"
         elif sp >= 0.7:

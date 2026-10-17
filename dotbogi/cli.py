@@ -59,7 +59,7 @@ def cmd_check(args) -> int:
     r = app.checks()
     if args.json:
         print(json.dumps(r, ensure_ascii=False, indent=1))
-        return 0
+        return 2 if r["counts"]["danger"] else 0
     s = app.project.settings
     print(f"돋보기 {__version__} · {app.project.root}")
     print(f"타깃 {s['target']} · ID {s['id_col']} · {s['task']} · 지표 {s['metric']}")
@@ -100,7 +100,7 @@ def cmd_sub_check(args) -> int:
 
 
 def cmd_report(args) -> int:
-    from .report import build_report
+    from .htmlreport import build_report
     app = _app(args.folder)
     out = Path(args.output) if args.output else None
     res = build_report(app, out, None, run_adversarial=args.adversarial)

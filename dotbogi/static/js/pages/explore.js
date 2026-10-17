@@ -110,7 +110,10 @@
         else if (r.type === "box") D.charts.box(el, r);
         else if (r.type === "heat") D.charts.crossHeat(el, r);
         else D.charts.series(el, r);
-        out.appendChild(h("div", { class: "tiny muted" }, r.sampled ? `전체 ${f.int(r.n)}행 중 표본으로 그렸습니다.` : `전체 ${f.int(r.n)}행`));
+        const notes = [r.sampled ? `전체 ${f.int(r.n)}행 중 표본으로 그렸습니다.` : `전체 ${f.int(r.n)}행`];
+        if (r.note) notes.push(r.note);
+        if (color && (r.type === "box" || r.type === "heat")) notes.push("이 그래프에서는 '색으로 나누기'를 쓰지 않습니다.");
+        out.appendChild(h("div", { class: "tiny muted" }, notes.join(" ")));
       } catch (e) { D.clear(out).appendChild(D.errorBox(e, draw)); }
     }
     draw();
@@ -129,12 +132,19 @@
     const fOp = D.select([["==", "="], ["!=", "≠"], [">", ">"], [">=", "≥"], ["<", "<"], ["<=", "≤"], ["contains", "포함"], ["isnull", "비어 있음"], ["notnull", "값 있음"]], "==", null, { class: "sm" });
     const fVal = h("input", { class: "input sm", placeholder: "값", style: { width: "140px" } });
     const chips = h("div", { class: "row", style: { gap: "6px" } });
+    const OPS = { "==": "=", "!=": "≠", ">": ">", ">=": "≥", "<": "<", "<=": "≤" };
+    const chipText = (fl) => fl.op === "isnull" ? `${fl.col} 비어 있음` : fl.op === "notnull" ? `${fl.col} 값 있음`
+      : fl.op === "contains" ? `${fl.col}에 '${fl.value}' 포함` : `${fl.col} ${OPS[fl.op] || fl.op} ${fl.value}`;
     const renderChips = () => {
       D.clear(chips);
-      filters.forEach((fl, i) => chips.appendChild(h("span", { class: "chip on", onclick: () => { filters.splice(i, 1); offset = 0; renderChips(); load(); } },
-        `${fl.col} ${fl.op} ${fl.op === "isnull" || fl.op === "notnull" ? "" : fl.value}`, h("span", { class: "x" }, "×"))));
+      filters.forEach((fl, i) => chips.appendChild(h("span", { class: "chip on", title: "눌러서 지우기", onclick: () => { filters.splice(i, 1); offset = 0; renderChips(); load(); } },
+        chipText(fl), h("span", { class: "x" }, "×"))));
     };
-    const addF = h("button", { class: "btn sm", onclick: () => { filters.push({ col: fCol.value, op: fOp.value, value: fVal.value }); offset = 0; renderChips(); load(); } }, "필터 추가");
+    const addF = h("button", { class: "btn sm", onclick: () => {
+      const needsValue = !["isnull", "notnull"].includes(fOp.value);
+      if (needsValue && fVal.value.trim() === "") { D.toast("비교할 값을 적으세요.", "error"); return; }
+      filters.push({ col: fCol.value, op: fOp.value, value: fVal.value.trim() }); offset = 0; renderChips(); load(true);
+    } }, "필터 추가");
     fVal.addEventListener("keydown", (e) => { if (e.key === "Enter") addF.click(); });
     const sw = D.seg([["train", "train"], ...(proj.shapes.test ? [["test", "test"]] : []), ...(proj.shapes.sample_submission ? [["sample_submission", "제출 양식"]] : [])], which,
       (v) => { which = v; offset = 0; filters = []; sort = null; renderChips(); load(); });
@@ -142,10 +152,16 @@
     const next = h("button", { class: "btn sm", onclick: () => { offset += limit; load(); } }, "다음");
     body.appendChild(D.card("데이터 보기", { actions: sw },
       h("div", { class: "row" }, fCol, fOp, fVal, addF, chips, h("span", { class: "grow" }), info, prev, next), h("div", { class: "mt12" }, out)));
-    async function load() {
+    async function load(justAdded) {
       D.clear(out).appendChild(D.loading());
       try {
-        const r = await D.api("/api/rows", { body: { which, offset, limit, sort, asc, filters } });
+        let r;
+        try {
+          r = await D.api("/api/rows", { body: { which, offset, limit, sort, asc, filters } });
+        } catch (e) {
+          if (justAdded) { filters.pop(); renderChips(); D.toast(e.message, "error"); r = await D.api("/api/rows", { body: { which, offset, limit, sort, asc, filters } }); }
+          else throw e;
+        }
         if (!ctx.isCurrent()) return;
         D.clear(out);
         info.textContent = r.matched ? `${f.int(r.offset + 1)}–${f.int(Math.min(r.offset + limit, r.matched))} / ${f.int(r.matched)}행` + (r.matched !== r.total ? ` (전체 ${f.int(r.total)})` : "") : "맞는 행 없음";
@@ -157,7 +173,8 @@
         table.appendChild(h("thead", null, trh));
         const tb = h("tbody");
         r.rows.forEach((row, i) => tb.appendChild(h("tr", null, h("td", { class: "num faint" }, r.index[i]),
-          row.map((v) => h("td", { class: v === null ? "null" : "", title: v === null ? "" : String(v) }, v === null ? "null" : typeof v === "number" ? f.num(v, 8) : String(v))))));
+          row.map((v) => h("td", { class: v === null ? "null" : "", title: v === null ? "" : String(v) },
+            v === null ? "비어 있음" : typeof v === "number" ? (Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(10)))) : String(v))))));
         table.appendChild(tb);
         out.appendChild(h("div", { class: "table-wrap", style: { maxHeight: "560px" } }, table));
       } catch (e) { D.clear(out).appendChild(D.errorBox(e, load)); }

@@ -49,8 +49,9 @@
         tile("실험", f.int(exps.length), `LB까지 있는 실험 ${withLb.length}개`),
         tile(`최고 CV (${metricLabel})`, best ? f.score(best.cv) : "–", best ? best.name : "CV가 기록된 실험이 없습니다"),
         tile("최고 Public LB", bestLb ? f.score(bestLb.lb_public) : "–", bestLb ? bestLb.name : "LB 점수를 표에 적어 넣으세요"),
-        tile("오늘 제출", limit ? `${data.submissions_today} / ${limit}` : f.int(data.submissions_today),
-          limit ? (left > 0 ? `오늘 ${left}번 더 낼 수 있습니다` : "오늘 제출 한도를 다 썼습니다") : "설정에서 하루 제출 한도를 적을 수 있습니다")));
+        D.STATIC ? tile("실험 기록 기준", D.STATIC.created_at || "–", "보고서를 만든 때") :
+          tile("오늘 제출 (LB 적은 실험)", limit ? `${data.submissions_today} / ${limit}` : f.int(data.submissions_today),
+            limit ? (left > 0 ? `오늘 ${left}번 더 낼 수 있습니다 · LB 점수를 적은 날로 셉니다` : "오늘 한도에 닿았습니다 · LB 점수를 적은 날로 셉니다") : "LB 점수를 적은 날로 셉니다. 설정에서 하루 한도를 적을 수 있습니다")));
 
       // 대장
       root.appendChild(ledgerCard(exps, data, reload));
@@ -71,7 +72,8 @@
         onclick: () => update(e.id, { final: !e.final }).catch(D.fail) }, (() => { const ic = D.icon("star"); if (e.final) ic.setAttribute("fill", "currentColor"); return ic; })()) },
       { key: "name", label: "이름", render: (e) => h("div", { class: "col", style: { gap: "1px" } },
         D.editable(e.name, e.name, (v) => update(e.id, { name: v })),
-        e.metric_mismatch ? h("span", { class: "tiny", style: { color: "var(--warn)" } }, `다른 지표(${e.metric})로 잰 실험`) : null) },
+        e.metric_mismatch ? h("span", { class: "tiny", style: { color: "var(--warn)" } }, `다른 지표(${e.metric_label || e.metric})로 잰 실험 · OOF가 없어 다시 계산 못 함`) : null,
+        e.rescored ? h("span", { class: "tiny muted", title: `원래 ${e.metric_original}: ${f.score(e.cv_original)}` }, "지금 지표로 OOF를 다시 채점") : null) },
       { key: "cv", label: "CV", num: true, render: (e) => h("div", { class: "col", style: { gap: "0", alignItems: "flex-end" } },
         D.editable(e.cv, e.cv === null ? null : f.score(e.cv), (v) => update(e.id, { cv: v }), { type: "number", placeholder: "입력" }),
         e.cv_std ? h("span", { class: "tiny faint" }, "±" + f.score(e.cv_std)) : null) },
@@ -94,24 +96,26 @@
     const tbl = D.table({ columns: cols, rows: exps, compact: true, sort: { key: "created_at", asc: false }, maxHeight: "520px",
       rowClass: (e) => (e.id === data.best_cv_id ? "best" : ""), onRow: (e) => detailModal(e.id),
       empty: D.empty("아직 기록된 실험이 없습니다", "검증 설계에서 기본 모델을 돌리거나, 학습 스크립트에서 dotbogi.log(...)로 기록하거나, '실험 추가'로 점수를 적어 넣으세요.", "flask") });
-    return D.card("실험 대장", { hint: `${D.metricLabel()} · ${data.higher_is_better ? "높을수록" : "낮을수록"} 좋음 · 점수 칸을 눌러 바로 고칠 수 있습니다` }, tbl);
+    return D.card("실험 대장", { hint: `${D.metricLabel()} · ${data.higher_is_better ? "높을수록" : "낮을수록"} 좋음` + (D.STATIC ? "" : " · 점수 칸을 눌러 바로 고칠 수 있습니다") }, tbl);
   }
 
   function cvlbCard(data, metricLabel) {
     const r = data.cv_lb;
     const [cls, title, text] = VERDICT[r.verdict] || VERDICT.unknown;
     const el = D.charts.el("chart");
+    const tentative = r.tentative && r.verdict !== "not_enough";
     const card = D.card("CV ↔ Public LB", { hint: r.n ? `실험 ${r.n}개` : "" },
-      h("div", { class: "callout " + cls }, D.icon(D.LEVEL_ICON[cls] || "info"), h("div", null, h("b", null, title), h("div", { class: "small" }, text))),
+      h("div", { class: "callout " + (tentative ? "info" : cls) }, D.icon(D.LEVEL_ICON[tentative ? "info" : cls] || "info"), h("div", null,
+        h("b", null, title + (tentative ? " (실험이 5개 미만이라 참고만)" : "")), h("div", { class: "small" }, text))),
       r.spearman !== undefined && r.spearman !== null ? h("div", { class: "row small muted mt8", style: { gap: "14px" } },
         h("span", null, "순위 상관(스피어만) ", h("b", { style: { color: "var(--text)" } }, f.num(r.spearman, 3))),
         r.pearson !== null && r.pearson !== undefined ? h("span", null, "피어슨 ", f.num(r.pearson, 3)) : null,
         r.fit ? h("span", null, "기울기 ", f.num(r.fit.slope, 3)) : null) : null,
-      r.n ? el : null,
+      r.n >= 2 ? el : null,
       (r.outliers || []).length ? h("div", { class: "small mt8" }, h("b", null, "추세에서 벗어난 실험: "),
         r.outliers.map((o) => h("span", { class: "badge " + (o.kind === "lb_lucky" ? "warn" : "danger"), style: { marginRight: "6px" } },
           `${o.name} (${o.kind === "lb_lucky" ? "LB가 CV보다 좋음 → 운일 수 있음" : "LB가 CV보다 나쁨"})`))) : null);
-    if (r.n) setTimeout(() => D.charts.cvlb(el, r, metricLabel, (p) => detailModal(p.id)), 0);
+    if (r.n >= 2) setTimeout(() => D.charts.cvlb(el, r, metricLabel, (p) => detailModal(p.id)), 0);
     return card;
   }
 
@@ -142,10 +146,11 @@
     const out = h("div");
     if (withOof.length === 0) return D.card("Public LB 흔들림", null, D.callout("info", "OOF 예측이 있는 실험이 있어야 계산할 수 있습니다. 기본 모델이나 dotbogi.log(oof=...)로 기록한 실험에 OOF가 붙습니다."));
     let a = withOof[0].id, b = "";
-    const sa = D.select(withOof.map((e) => [e.id, e.name]), a, (v) => (a = v));
+    const sa = D.select(withOof.map((e) => [e.id, e.name]), a, (v) => { a = v; if (b === a) { b = ""; sb.value = ""; } });
     const sb = D.select([["", "(비교 안 함)"], ...withOof.map((e) => [e.id, e.name])], b, (v) => (b = v));
     const btn = h("button", { class: "btn primary", onclick: () => D.busy(btn, run) }, "계산");
     async function run() {
+      if (b && b === a) throw new Error("서로 다른 두 실험을 고르세요.");
       const r = await D.api("/api/lbnoise", { body: { id: a, id_b: b || undefined } });
       D.charts.disposeIn(out);
       D.clear(out);
@@ -177,11 +182,11 @@
     try { e = await D.api("/api/experiment", { params: { id } }); } catch (err) { D.fail(err); return; }
     const body = h("div", { class: "col" });
     body.appendChild(h("dl", { class: "kv" },
-      h("dt", null, "지표"), h("dd", null, e.metric || "–"),
+      h("dt", null, "지표"), h("dd", null, metricName(e.metric)),
       h("dt", null, "CV"), h("dd", null, f.score(e.cv) + (e.cv_std ? ` ± ${f.score(e.cv_std)}` : "")),
       h("dt", null, "Public / Private"), h("dd", null, `${f.score(e.lb_public)} / ${f.score(e.lb_private)}`),
       h("dt", null, "만든 때"), h("dd", null, f.when(e.created_at)),
-      h("dt", null, "제출한 때"), h("dd", null, f.when(e.submitted_at)),
+      h("dt", null, e.source === "kaggle" ? "제출한 때" : "LB 적은 때"), h("dd", null, f.when(e.submitted_at)),
       h("dt", null, "출처"), h("dd", null, (SOURCE[e.source] || [e.source])[0]),
       h("dt", null, "ID"), h("dd", null, h("code", null, e.id))));
     if (e.notes) body.appendChild(h("div", { class: "callout info" }, D.icon("info"), h("div", null, e.notes)));
@@ -208,6 +213,12 @@
       files.test ? h("a", { class: "btn sm", href: D.downloadUrl(e.id, "test") }, D.icon("download"), "test 예측 (parquet)") : null,
       files.submission ? h("button", { class: "btn sm needs-server", onclick: () => { m.close(); D.go("submission", { exp: e.id }); } }, "제출 파일 검사") : null));
     const m = D.modal({ title: e.name, body, wide: true });
+  }
+
+  function metricName(key) {
+    if (!key) return "–";
+    const m = ((D.project() || {}).metrics || []).find((x) => x.key === key);
+    return m ? m.label : key;
   }
 
   function addModal(reload) {

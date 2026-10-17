@@ -1,6 +1,8 @@
 """제출 파일 검사: sample_submission과 형식 비교, 값 범위·결측 확인, 안전한 자동 수정, 두 제출물 비교."""
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -90,10 +92,18 @@ def check_submission(sub: pd.DataFrame, sample: pd.DataFrame | None, id_col: str
             if extra_ids:
                 ex = ", ".join(list(map(str, list(extra_ids)[:3])))
                 hint = ""
-                if miss_ids and any(e.lstrip("0") in {m.lstrip("0") for m in miss_ids} for e in list(extra_ids)[:50]):
-                    hint = " 앞자리 0이 사라진 것 같습니다(예: '0012' → 12). ID를 문자열로 읽으세요."
+                sample_extra = list(extra_ids)[:50]
+                if miss_ids and any(e.lstrip("0") in {m.lstrip("0") for m in miss_ids} for e in sample_extra):
+                    hint = " 앞자리 0이 사라진 것 같습니다(예: '0012' → 12). ID를 문자열로 읽고 저장하세요."
+                elif any(re.fullmatch(r"-?\d+(\.\d+)?[eE][+-]?\d+", e) for e in sample_extra):
+                    hint = (" ID가 '8.00E+201'처럼 지수 표기로 바뀐 것 같습니다. 엑셀로 열었다 저장하면 생깁니다. "
+                            "ID를 문자열로 읽고 저장하세요.")
                 items.append(_item("danger", f"sample_submission에 없는 ID가 {len(extra_ids):,}개 있습니다",
                                    f"예: {ex}.{hint}"))
+            if pd.api.types.is_float_dtype(sub[id_col]) and pd.api.types.is_integer_dtype(sample[id_col]) \
+                    and not miss_ids and not extra_ids:
+                items.append(_item("warn", "ID가 '892.0'처럼 소수점이 붙은 숫자로 저장됐습니다",
+                                   "값은 같지만 대회에 따라 형식 오류가 납니다. 정수로 저장하세요.", fixable=True))
             if not miss_ids and not extra_ids and not dup and len(ids) == len(exp_ids) \
                     and not (ids.to_numpy() == exp_ids.to_numpy()).all():
                 items.append(_item("info", "ID 순서가 sample_submission과 다릅니다",
@@ -196,6 +206,11 @@ def check_submission(sub: pd.DataFrame, sample: pd.DataFrame | None, id_col: str
             if yt.min() >= 0 and st["min"] < 0:
                 items.append(_item("warn", f"'{c}'에 음수 예측이 있습니다 (최소 {st['min']:.3g})",
                                    "train 타깃은 전부 0 이상입니다. 0으로 자르면 보통 점수가 좋아집니다.", fixable=True))
+            if yt.min() >= 0 and yt.max() > 20 and st["max"] < np.log1p(yt.max()) + 0.5 \
+                    and st["mean"] < 0.5 * yt.mean():
+                items.append(_item("warn", f"'{c}' 예측이 타깃보다 훨씬 작습니다",
+                                   f"예측 평균 {st['mean']:.3g}, train 타깃 평균 {yt.mean():.3g}. log1p로 바꿔 학습했다면 "
+                                   "expm1로 되돌렸는지 확인하세요."))
             span = yt.max() - yt.min()
             if span > 0 and (st["max"] > yt.max() + span or st["min"] < yt.min() - span):
                 items.append(_item("warn", f"'{c}' 예측 범위가 train 타깃 범위를 크게 벗어납니다",
@@ -237,8 +252,10 @@ def fix_submission(sub: pd.DataFrame, sample: pd.DataFrame, id_col: str | None, 
             pos = pd.Series(np.arange(len(sub)), index=key_sub.to_numpy())
             sub = sub.iloc[pos.loc[key_exp.to_numpy()].to_numpy()].reset_index(drop=True)
             done.append("행 순서를 sample_submission ID 순서로 정렬")
-        sub[id_col] = sample[id_col].to_numpy() if len(sub) == len(sample) and \
-            (_key(sub[id_col]).to_numpy() == key_exp.to_numpy()).all() else sub[id_col]
+        if len(sub) == len(sample) and (_key(sub[id_col]).to_numpy() == key_exp.to_numpy()).all():
+            if sub[id_col].dtype != sample[id_col].dtype:
+                done.append("ID를 sample_submission과 같은 형식으로 맞춤")
+            sub[id_col] = sample[id_col].to_numpy()
     pred_cols = [c for c in cols if c != id_col]
     if task == "binary" and pred_cols and pd.api.types.is_numeric_dtype(sub[pred_cols[0]]):
         c = pred_cols[0]

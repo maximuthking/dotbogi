@@ -77,7 +77,7 @@
           h("div", { class: "row mt12" }, h("span", { class: "grow small muted" }, res.has_all_tests ? "저장하면 블렌딩한 OOF·test 예측·제출 파일이 새 실험으로 기록됩니다." : "고른 실험 중 test 예측이 없는 것이 있어 제출 파일은 만들 수 없습니다(OOF만 저장)."),
             h("button", { class: "btn primary needs-server", onclick: (e) => D.busy(e.currentTarget, async () => {
               const r = await D.api("/api/ensemble/save", { body: {} });
-              D.toast(r.has_submission ? "앙상블을 실험으로 저장하고 제출 파일을 만들었습니다." : "앙상블을 실험으로 저장했습니다.");
+              D.toast((r.has_submission ? "앙상블을 실험으로 저장하고 제출 파일을 만들었습니다." : "앙상블을 실험으로 저장했습니다.") + (r.notice ? " " + r.notice : ""), r.notice ? "warn" : "ok", r.notice ? 7000 : 3200);
               D.go("experiments");
             }) }, "실험으로 저장"))));
         setTimeout(() => {

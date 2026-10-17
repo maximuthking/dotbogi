@@ -18,7 +18,7 @@
       const out = h("div");
       const field = D.pathField(params.path || "", { placeholder: "제출할 CSV 파일 경로", start: proj.root });
       const expSel = exps.length ? D.select([["", "또는 실험의 제출 파일 고르기"], ...exps.map((e) => [e.id, e.name])], fromExp ? fromExp.id : "", (v) => { if (v) check({ exp: v }); }) : null;
-      const btn = h("button", { class: "btn primary", onclick: () => D.busy(btn, () => check({ path: field.value })) }, "검사");
+      const btn = h("button", { class: "btn primary", onclick: () => D.busy(btn, () => { if (expSel) expSel.value = ""; return check({ path: field.value }); }) }, "검사");
       field.input.addEventListener("keydown", (e) => { if (e.key === "Enter") btn.click(); });
       root.appendChild(D.card("제출 파일 검사", { hint: proj.shapes.sample_submission ? "sample_submission과 비교합니다" : "sample_submission이 없어 일부만 검사합니다" },
         h("div", { class: "row", style: { flexWrap: "nowrap" } }, h("div", { class: "grow" }, field), btn), expSel ? h("div", { class: "mt8" }, expSel) : null, out));
@@ -26,7 +26,13 @@
       async function check({ path, exp }) {
         if (!path && !exp) throw new Error("파일 경로를 적거나 고르세요.");
         D.clear(out).appendChild(D.loading("검사하는 중"));
-        const r = await D.api("/api/submission/check", { body: exp ? { exp } : { path } });
+        let r;
+        try {
+          r = await D.api("/api/submission/check", { body: exp ? { exp } : { path } });
+        } catch (e) {
+          D.clear(out).appendChild(D.errorBox(e));
+          return;
+        }
         if (!ctx.isCurrent()) return;
         field.value = r.path;
         D.setParams({ path: r.path });
@@ -69,9 +75,10 @@
       const b = D.pathField("", { placeholder: "제출 파일 B", start: proj.root });
       const cmpOut = h("div");
       const cmpBtn = h("button", { class: "btn", onclick: () => D.busy(cmpBtn, async () => {
-        if (!a.value || !b.value) throw new Error("두 파일을 모두 고르세요.");
-        const r = await D.api("/api/submission/compare", { body: { a: a.value, b: b.value } });
         D.clear(cmpOut);
+        if (!a.value || !b.value) throw new Error("두 파일을 모두 고르세요.");
+        if (a.value === b.value) throw new Error("서로 다른 두 파일을 고르세요.");
+        const r = await D.api("/api/submission/compare", { body: { a: a.value, b: b.value } });
         cmpOut.appendChild(h("div", { class: "small muted mt8" }, `맞춘 행 ${f.int(r.matched_rows)}개`));
         cmpOut.appendChild(D.table({ columns: [
           { key: "column", label: "컬럼" }, { key: "pearson", label: "피어슨 상관", num: true, render: (x) => f.num(x.pearson, 4) },

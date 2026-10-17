@@ -18,20 +18,24 @@
 
       // 파일 타일
       const tiles = h("div", { class: "grid g4" });
-      const tile = (label, dot, main, small, foot) => h("div", { class: "card stat" },
-        h("div", { class: "label" }, dot ? h("span", { class: "dot " + dot }) : null, label),
+      const fname = (k) => { const v = s.files[k]; return v ? v.split(/[\\/]/).pop() : null; };
+      const tile = (label, dot, main, small, foot, key) => h("div", { class: "card stat" },
+        h("div", { class: "label" }, dot ? h("span", { class: "dot " + dot }) : null, label,
+          key && fname(key) ? h("span", { class: "faint ellipsis", style: { maxWidth: "150px" }, title: s.files[key] }, "· " + fname(key)) : null,
+          key && !D.STATIC ? h("a", { href: "#/settings", class: "small", style: { marginLeft: "auto" } }, "바꾸기") : null),
         h("div", { class: "value" }, main, small ? h("small", null, small) : null), foot ? h("div", { class: "foot" }, foot) : null);
       const fl = ov.files;
-      tiles.appendChild(tile("train", "train", f.int(fl.train.rows), "행", `${f.int(fl.train.cols)}열 · 메모리 ${f.mb(fl.train.memory_mb)}`));
-      tiles.appendChild(fl.test ? tile("test", "test", f.int(fl.test.rows), "행", `${f.int(fl.test.cols)}열 · test/train ${f.pct(fl.test.rows / fl.train.rows, 0)}`)
-        : tile("test", "test", "없음", null, "설정에서 test 파일을 지정할 수 있습니다"));
-      tiles.appendChild(fl.sample_submission ? tile("제출 양식", null, f.int(fl.sample_submission.rows), "행", `컬럼 ${fl.sample_submission.cols}개`)
-        : tile("제출 양식", null, "없음", null, "제출 검사가 덜 꼼꼼해집니다"));
+      tiles.appendChild(tile("train", "train", f.int(fl.train.rows), "행", `${f.int(fl.train.cols)}열 · 메모리 ${f.mb(fl.train.memory_mb)}`, "train"));
+      tiles.appendChild(fl.test ? tile("test", "test", f.int(fl.test.rows), "행", `${f.int(fl.test.cols)}열 · test/train ${f.pct(fl.test.rows / fl.train.rows, 0)}`, "test")
+        : tile("test", "test", "없음", null, "설정에서 test 파일을 지정할 수 있습니다", "test"));
+      tiles.appendChild(fl.sample_submission ? tile("제출 양식", null, f.int(fl.sample_submission.rows), "행", `컬럼 ${fl.sample_submission.cols}개`, "sample_submission")
+        : tile("제출 양식", null, "없음", null, "제출 검사가 덜 꼼꼼해집니다", "sample_submission"));
       const kinds = Object.entries(ov.kinds).sort((a, b) => b[1] - a[1]);
       tiles.appendChild(h("div", { class: "card stat" }, h("div", { class: "label" }, "컬럼 종류"),
         h("div", { class: "row mt8", style: { gap: "6px" } }, kinds.map(([k, n]) => h("span", { class: "badge kind " + k }, `${D.KIND_LABEL[k] || k} ${n}`)))));
       root.appendChild(tiles);
 
+      if ((proj.notices || []).length && !D.STATIC) root.appendChild(D.callout("warn", proj.notices.join(" ")));
       const grid = h("div", { class: "grid g-wide" });
       root.appendChild(grid);
       const left = h("div", { class: "col", style: { gap: "16px" } });
@@ -42,7 +46,7 @@
       left.appendChild(settingsCard(proj, ov));
       // 타깃 분포
       if (ov.target) left.appendChild(targetCard(ov.target));
-      else left.appendChild(D.card("타깃", null, D.callout("warn", "타깃 컬럼을 찾지 못했습니다. 위에서 직접 고르면 타깃 관계·예측력·기본 모델을 쓸 수 있습니다.")));
+      else left.appendChild(D.card("타깃", null, D.callout("warn", "타깃이 정해지지 않았습니다. 위 '대회 설정'에서 고르면 타깃 관계·예측력·기본 모델을 쓸 수 있습니다.")));
 
       // 주의할 점 (점검 결과 요약)
       const checkBody = h("div", null, D.loading("데이터를 점검하는 중 (처음 한 번)"));
@@ -74,10 +78,13 @@
     const allCols = proj.columns.map((c) => c.name);
     const save = async (patch, msg) => {
       try {
+        const before = s.metric;
         await D.api("/api/settings", { body: patch });
         await D.refreshState();
         D.navBadges = {};
-        D.toast(msg || "바꿨습니다. 분석을 새로 계산합니다.");
+        const after = D.settings().metric;
+        const mi = D.project().metric_info;
+        D.toast((msg || "바꿨습니다. 분석을 새로 계산합니다.") + (after !== before && !("metric" in patch) && mi ? ` 평가 지표는 '${mi.label}'(으)로 바꿨습니다.` : ""));
         D.render();
       } catch (e) { D.fail(e); }
     };
@@ -99,6 +106,14 @@
       ov.reasons && ov.reasons.length ? h("details", { class: "small muted" }, h("summary", { style: { cursor: "pointer" } }, "어떻게 추론했나요?"),
         h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, ov.reasons.map((r) => h("li", null, r)))) : null,
       D.callout("info", "평가 지표는 대회 안내문과 같게 맞추세요. 대회 전용 계산식은 설정에서 파이썬 파일로 등록할 수 있습니다."));
+    if (D.STATIC) {
+      return D.card("대회 설정", null, h("dl", { class: "kv" },
+        h("dt", null, "타깃"), h("dd", null, s.target.join(", ") || "없음"),
+        h("dt", null, "과제 유형"), h("dd", null, D.TASK_LABEL[s.task] || "–"),
+        h("dt", null, "평가 지표"), h("dd", null, (mi && mi.label) || s.metric || "–"),
+        h("dt", null, "ID"), h("dd", null, s.id_col || "없음")),
+        ov.reasons && ov.reasons.length ? h("ul", { class: "small muted", style: { margin: "8px 0 0", paddingLeft: "18px" } }, ov.reasons.map((r) => h("li", null, r))) : null);
+    }
     return D.card("대회 설정", { hint: "틀리면 바로 고치세요" }, body);
   }
 

@@ -41,7 +41,7 @@
         const exChips = h("div", { class: "row", style: { gap: "6px" } });
         const renderEx = () => {
           D.clear(exChips);
-          if (!exclude.length) exChips.appendChild(h("span", { class: "small muted" }, "아래 표에서 컬럼을 눌러 빼고 다시 실행할 수 있습니다."));
+          if (!exclude.length) exChips.appendChild(h("span", { class: "small muted" }, "'빼기'로 컬럼을 고른 뒤 '다시 실행'을 누르면 그 컬럼 없이 다시 봅니다."));
           for (const c of exclude) exChips.appendChild(h("span", { class: "chip on", onclick: () => { exclude = exclude.filter((x) => x !== c); renderEx(); } }, c, h("span", { class: "x" }, "×")));
         };
         renderEx();
@@ -76,7 +76,7 @@
             { key: "importance", label: "구분 기여", num: true, render: (x) => f.pct(x.importance, 1) },
             { key: "single_auc", label: "혼자서 구분 AUC", num: true, render: (x) => h("span", { class: x.single_auc >= 0.7 ? "badge danger" : x.single_auc >= 0.6 ? "badge warn" : "" }, f.num(x.single_auc, 3)) },
             { key: "encoding", label: "모델 입력", sortable: false, render: (x) => h("span", { class: "small muted" }, x.encoding) },
-            { key: "act", label: "", sortable: false, render: (x) => h("button", { class: "btn sm needs-server", onclick: () => { if (!exclude.includes(x.name)) { exclude.push(x.name); renderEx(); } } }, "빼고 보기") },
+            { key: "act", label: "", sortable: false, render: (x) => h("button", { class: "btn sm needs-server", onclick: () => { if (!exclude.includes(x.name)) { exclude.push(x.name); renderEx(); } } }, "빼기") },
           ],
           rows: featRows, compact: true, sort: { key: "importance", asc: false }, maxHeight: "360px",
           onRow: (x) => D.go("columns", { name: x.name }),
@@ -90,6 +90,7 @@
         const r = await D.api("/api/adversarial", { body: { exclude } });
         await D.runJob(r.job);
         const res = await D.api("/api/adversarial");
+        D.toast(`적대적 검증을 마쳤습니다 (AUC ${res.result.auc.toFixed(3)}).`);
         if (ctx.isCurrent()) { D.charts.disposeIn(advCard); await renderAdv(res); renderDriftTable(); }
       }
 

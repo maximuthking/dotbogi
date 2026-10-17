@@ -94,7 +94,7 @@ def test_full_flow_binary(planted_dir):
     corr = app.correlation()
     assert corr["names"]
     # 보고서
-    from dotbogi.report import build_report
+    from dotbogi.htmlreport import build_report
     rep = build_report(app, planted_dir / "report.html")
     html = (planted_dir / "report.html").read_text(encoding="utf-8")
     assert rep["bytes"] < 5_000_000 and "__DOTBOGI_STATIC__" in html and "<script src=" not in html
@@ -316,7 +316,7 @@ def test_cli(planted_dir):
     r = _cli("check", str(planted_dir))
     assert r.returncode == 2 and "누수" in r.stdout  # 위험 항목이 있으면 2
     r = _cli("check", str(planted_dir), "--json")
-    assert json.loads(r.stdout)["counts"]["danger"] >= 1
+    assert json.loads(r.stdout)["counts"]["danger"] >= 1 and r.returncode == 2
     sample = pd.read_csv(planted_dir / "sample_submission.csv")
     good = planted_dir / "good.csv"
     sample.to_csv(good, index=False)

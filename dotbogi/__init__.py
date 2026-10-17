@@ -48,6 +48,11 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
             arr = arr[:, 1]
         if task != "multiclass" and arr.ndim == 2 and arr.shape[1] == 1:
             arr = arr[:, 0]
+        if task == "multiclass" and (arr.ndim != 2 or arr.shape[1] != len(classes)):
+            raise ValueError(f"다중분류 예측은 (행 수, 클래스 {len(classes)}개) 모양의 확률 배열이어야 합니다. "
+                             f"받은 모양: {arr.shape}. 클래스 순서: {classes}")
+        if task != "multiclass" and arr.ndim != 1:
+            raise ValueError(f"예측은 1차원 배열이어야 합니다. 받은 모양: {arr.shape}")
         return arr
 
     if oof is not None:
@@ -104,7 +109,7 @@ def report(project: str, path: str | None = None, adversarial: bool = False, sho
     from pathlib import Path as _Path
 
     from .api import App
-    from .report import build_report
+    from .htmlreport import build_report
 
     app = App()
     app.project = _load_project(project)
