@@ -7,7 +7,7 @@
   D.STATIC = window.__DOTBOGI_STATIC__ || null;
 
   // ───────────────────────────── 아이콘 (직접 그린 단순 선 아이콘)
-  const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0B6A8F"/><circle cx="23" cy="32" r="17" fill="none" stroke="#8CCBFF" stroke-width="3.5"/><circle cx="41" cy="32" r="17" fill="none" stroke="#FF9A57" stroke-width="3.5"/><path d="M32 17.6A17 17 0 0 1 32 46.4A17 17 0 0 1 32 17.6Z" fill="#FFFFFF"/></svg>';
+  const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="21" cy="32" r="18" fill="#3A86D6"/><circle cx="43" cy="32" r="18" fill="#F07A3A"/><path d="M32 17.75A18 18 0 0 1 32 46.25A18 18 0 0 1 32 17.75Z" fill="#FFFFFF"/><path d="M30.2 27.8Q30.8 23.9 33.3 22.4" fill="none" stroke="#0F2530" stroke-width="2.3" stroke-linecap="round" opacity=".5"/></svg>';
   D.logo = () => { const t = document.createElement("template"); t.innerHTML = LOGO; return t.content.firstChild; };
 
   const ICONS = {

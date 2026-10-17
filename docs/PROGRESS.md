@@ -41,4 +41,4 @@ program-remix 스킬 단계별 진행 기록. 체크된 항목은 실제로 끝�
 - 시작 화면을 IDE 시작 페이지처럼(왼쪽 시작하기·단축키, 오른쪽 최근 대회).
 - 단축키 Ctrl+O, Ctrl+B, Ctrl+1~0.
 - 실행: Edge/Chrome `--app` 독립 창 + 전용 프로필, 창을 닫으면 서버 종료. 자동 로그인 안내창은 꺼 둠. `--browser`로 탭 실행.
-- 로고: train(파랑)과 test(주황) 원이 겹친 자리가 볼록렌즈가 되는 모양. `static/img/logo.svg`, `dotbogi.ico`. `dotbogi shortcut`으로 바탕화면 바로가기.
+- 로고: train(파랑)과 test(주황) 원이 겹친 자리가 볼록렌즈가 되는 모양. 원을 꽉 채운 판에 반사광, 바탕은 투명(사용자 선택). `static/img/logo.svg`, `dotbogi.ico`. `dotbogi shortcut`으로 바탕화면 바로가기.
