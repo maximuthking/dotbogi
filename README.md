@@ -1,4 +1,4 @@
-<img src="docs/images/logo.png" width="72" alt="돋보기 로고">
+<img src="assets/logo.png" width="72" alt="돋보기 로고">
 
 # 돋보기 (Dotbogi)
 
@@ -6,7 +6,7 @@
 데이터를 열자마자 함정(누수·분포 차이·검증 방법)을 찾고, 실험 점수와 리더보드를 한 곳에서 비교하고, 제출 파일은 올리기 전에 검사합니다.
 모든 계산은 내 컴퓨터에서 하고, 데이터는 밖으로 나가지 않습니다.
 
-![개요 화면](docs/images/overview.png)
+![개요 화면](assets/overview.png)
 
 ## 무엇을 해주나요
 
@@ -25,7 +25,7 @@
 
 ### 기존 도구와 무엇이 다른가요
 
-조사 내용과 근거는 [기획서](docs/PLAN.md)와 [조사 자료](docs/research/)에 있습니다. 요약하면:
+기존 도구를 조사해 비교한 요약입니다.
 
 - Sweetviz·ydata-profiling은 범주형·다중분류 타깃을 다루지 못하고, 큰 데이터에서 HTML이 무거워집니다. 돋보기는 모든 과제 유형을 다루고, 결과는 요약만 담습니다.
 - Deepchecks·nyaggle 같은 검증 도구는 유지보수가 멈췄거나(2023~2024) 최신 pandas·Python과 맞지 않습니다. 돋보기는 pandas 2·3, Python 3.10 이상에서 동작합니다.
@@ -86,7 +86,7 @@ dotbogi shortcut C:\Projects\Dacon\대회이름  # 그 대회를 바로 여는 �
 6. 학습 스크립트에서 `dotbogi.log(...)`로 실험을 기록하고, 제출 후 **실험**에서 Public LB를 적어 넣습니다.
 7. 마감 전에 **실험**의 최종 제출 추천과 **제출 검사**를 확인합니다.
 
-![실험 화면](docs/images/experiments.png)
+![실험 화면](assets/experiments.png)
 
 ## 학습 스크립트와 함께 쓰기
 
