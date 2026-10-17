@@ -5,9 +5,12 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
 import socket
+import subprocess
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 import webbrowser
@@ -220,13 +223,72 @@ def make_server(path: str | None = None, port: int = 8765):
     return httpd, app, port
 
 
-def serve(path: str | None = None, port: int = 8765, open_browser: bool = True):
+def find_app_browser() -> str | None:
+    """앱 창(--app)을 띄울 수 있는 크로뮴 계열 브라우저(Edge, Chrome, Chromium) 경로."""
+    env = os.environ.get("DOTBOGI_BROWSER")
+    if env and Path(env).exists():
+        return env
+    cands: list[Path] = []
+    if sys.platform == "win32":
+        roots = [os.environ.get(k) for k in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA")]
+        for r in filter(None, roots):
+            cands += [Path(r) / "Microsoft/Edge/Application/msedge.exe", Path(r) / "Google/Chrome/Application/chrome.exe"]
+    elif sys.platform == "darwin":
+        cands += [Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                  Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                  Path("/Applications/Chromium.app/Contents/MacOS/Chromium")]
+    for c in cands:
+        if c.exists():
+            return str(c)
+    for name in ("microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        w = shutil.which(name)
+        if w:
+            return w
+    return None
+
+
+def open_app_window(url: str, on_close=None) -> bool:
+    """대회 도구를 브라우저 탭이 아니라 주소창 없는 독립 창으로 띄운다.
+    전용 프로필을 쓰므로 창을 닫으면 브라우저 프로세스가 끝나고, 그때 on_close를 부른다."""
+    exe = find_app_browser()
+    if not exe:
+        return False
+    home = Path(os.environ.get("DOTBOGI_HOME", Path.home() / ".dotbogi"))
+    profile = home / "window"
+    try:
+        profile.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}", "--window-size=1440,920",
+                                 "--no-first-run", "--no-default-browser-check", "--disable-sync",
+                                 "--disable-features=Translate,msImplicitSignin,msEdgeSyncConsent"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    started = time.monotonic()
+
+    def watch():
+        proc.wait()
+        # 바로 끝났으면 이미 떠 있던 돋보기 창에 넘긴 것이라 서버는 그대로 둔다
+        if time.monotonic() - started > 3 and on_close:
+            on_close()
+    threading.Thread(target=watch, daemon=True).start()
+    return True
+
+
+def serve(path: str | None = None, port: int = 8765, open_browser: bool = True, app_window: bool = True):
     httpd, app, port = make_server(path, port)
     url = f"http://127.0.0.1:{port}/"
     print(f"돋보기가 열렸습니다: {url}")
-    print("끝내려면 이 창에서 Ctrl+C를 누르세요.")
     if open_browser:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+        def close_server():
+            print("창을 닫아 돋보기를 종료합니다.")
+            threading.Thread(target=httpd.shutdown, daemon=True).start()
+        if app_window and open_app_window(url, on_close=close_server):
+            print("돋보기 창을 닫으면 끝납니다. (이 창에서 Ctrl+C로도 끝낼 수 있습니다)")
+        else:
+            threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+            print("끝내려면 이 창에서 Ctrl+C를 누르세요.")
+    else:
+        print("끝내려면 이 창에서 Ctrl+C를 누르세요.")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

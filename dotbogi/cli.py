@@ -9,16 +9,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from . import __version__
 
-COMMANDS = {"check", "sub-check", "report", "serve"}
+COMMANDS = {"check", "sub-check", "report", "serve", "shortcut"}
 LEVEL_MARK = {"danger": "[위험]", "warn": "[주의]", "info": "[참고]", "ok": "[괜찮음]"}
 
 
 def _utf8_stdout():
+    # pythonw(콘솔 없는 실행)에서는 표준 출력이 없으므로 버린다
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -99,6 +105,36 @@ def cmd_sub_check(args) -> int:
     return 0 if r["ok"] else 1
 
 
+def cmd_shortcut(args) -> int:
+    """바탕화면에 돋보기 아이콘 바로가기를 만든다 (Windows). 콘솔 창 없이 뜨고, 창을 닫으면 끝난다."""
+    if sys.platform != "win32":
+        print("바로가기 만들기는 Windows에서만 됩니다. 다른 OS에서는 'python -m dotbogi'로 실행하세요.", file=sys.stderr)
+        return 1
+    import subprocess
+    ico = Path(__file__).parent / "static" / "img" / "dotbogi.ico"
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    target = pyw if pyw.exists() else exe
+    arg = "-m dotbogi" + (f' "{Path(args.folder).resolve()}"' if args.folder else "")
+    if args.output:
+        lnk = Path(args.output)
+    else:
+        desktop = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
+                                 capture_output=True, text=True).stdout.strip() or str(Path.home() / "Desktop")
+        name = "돋보기" + (f" - {Path(args.folder).resolve().name}" if args.folder else "")
+        lnk = Path(desktop) / f"{name}.lnk"
+    q = lambda v: str(v).replace("'", "''")  # noqa: E731
+    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(lnk)}');"
+          f"$s.TargetPath='{q(target)}';$s.Arguments='{q(arg)}';$s.WorkingDirectory='{q(Path.home())}';"
+          f"$s.IconLocation='{q(ico)},0';$s.Description='돋보기: 대회 데이터 분석';$s.Save()")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    if r.returncode != 0 or not lnk.exists():
+        print(f"바로가기를 만들지 못했습니다: {r.stderr.strip()}", file=sys.stderr)
+        return 1
+    print(f"바로가기를 만들었습니다: {lnk}")
+    return 0
+
+
 def cmd_report(args) -> int:
     from .htmlreport import build_report
     app = _app(args.folder)
@@ -116,16 +152,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not argv or argv[0] not in COMMANDS:
         ap = argparse.ArgumentParser(prog="dotbogi", description="돋보기: 캐글·데이콘 정형 데이터 대회 분석 도구",
-                                     epilog="다른 명령: check, sub-check, report (예: dotbogi check 대회폴더)")
+                                     epilog="다른 명령: check, sub-check, report, shortcut (예: dotbogi check 대회폴더)")
         ap.add_argument("folder", nargs="?", help="열 대회 폴더 (생략하면 시작 화면)")
         ap.add_argument("--port", type=int, default=8765, help="포트 (기본 8765, 쓰는 중이면 다음 번호)")
-        ap.add_argument("--no-browser", action="store_true", help="브라우저를 자동으로 열지 않기")
+        ap.add_argument("--no-browser", action="store_true", help="화면을 자동으로 열지 않기")
+        ap.add_argument("--browser", action="store_true", help="독립 창 대신 기본 브라우저 탭으로 열기")
         a = ap.parse_args(argv)
         if a.folder and not Path(a.folder).is_dir():
             print(f"폴더가 없습니다: {a.folder}", file=sys.stderr)
             return 1
         from .server import serve
-        serve(a.folder, port=a.port, open_browser=not a.no_browser)
+        serve(a.folder, port=a.port, open_browser=not a.no_browser, app_window=not a.browser)
         return 0
 
     ap = argparse.ArgumentParser(prog="dotbogi")
@@ -142,10 +179,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("folder")
     p.add_argument("-o", "--output")
     p.add_argument("--adversarial", action="store_true", help="적대적 검증도 실행해서 넣기")
+    p = sub.add_parser("shortcut", help="바탕화면에 아이콘 바로가기 만들기 (Windows)")
+    p.add_argument("folder", nargs="?", help="바로 열 대회 폴더 (생략하면 시작 화면)")
+    p.add_argument("-o", "--output", help="바로가기 파일 경로 (기본: 바탕화면)")
     p = sub.add_parser("serve", help="화면 열기")
     p.add_argument("folder", nargs="?")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--browser", action="store_true")
     a = ap.parse_args(argv)
     from .io import LoadError
     try:
@@ -155,8 +196,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_sub_check(a)
         if a.cmd == "report":
             return cmd_report(a)
+        if a.cmd == "shortcut":
+            return cmd_shortcut(a)
         from .server import serve
-        serve(a.folder, port=a.port, open_browser=not a.no_browser)
+        serve(a.folder, port=a.port, open_browser=not a.no_browser, app_window=not a.browser)
         return 0
     except LoadError as e:
         print(f"오류: {e}", file=sys.stderr)

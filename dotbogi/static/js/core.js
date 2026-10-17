@@ -7,7 +7,11 @@
   D.STATIC = window.__DOTBOGI_STATIC__ || null;
 
   // ───────────────────────────── 아이콘 (직접 그린 단순 선 아이콘)
+  const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0B6A8F"/><circle cx="23" cy="32" r="17" fill="none" stroke="#8CCBFF" stroke-width="3.5"/><circle cx="41" cy="32" r="17" fill="none" stroke="#FF9A57" stroke-width="3.5"/><path d="M32 17.6A17 17 0 0 1 32 46.4A17 17 0 0 1 32 17.6Z" fill="#FFFFFF"/></svg>';
+  D.logo = () => { const t = document.createElement("template"); t.innerHTML = LOGO; return t.content.firstChild; };
+
   const ICONS = {
+    panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9 4.5v15"/>',
     lens: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5.5 5.5"/><path d="M8 10.5h5M10.5 8v5"/>',
     home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/>',
     overview: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
@@ -252,17 +256,19 @@
   };
 
   function renderJobs() {
-    let tray = document.getElementById("jobs");
-    if (!tray) { tray = h("div", { class: "jobs", id: "jobs" }); document.body.appendChild(tray); }
-    D.clear(tray);
-    for (const { job } of running.values()) {
-      const pct = Math.round((job.progress || 0) * 100);
-      tray.appendChild(h("div", { class: "job" },
-        h("div", { class: "jt" }, h("span", { class: "spinner" }), job.label || "작업 중", h("span", { class: "grow" }),
-          h("span", { class: "muted num" }, pct + "%")),
-        h("div", { class: "jm" }, job.message || ""),
-        h("div", { class: "progress" }, h("div", { style: { width: Math.max(3, pct) + "%" } }))));
-    }
+    const slot = document.getElementById("sb-jobs");
+    if (!slot) return;
+    D.clear(slot);
+    const jobs = [...running.values()].map((r) => r.job);
+    if (!jobs.length) return;
+    const job = jobs[0];
+    const pct = Math.round((job.progress || 0) * 100);
+    slot.appendChild(h("span", { class: "sb-job", title: (job.label || "") + " · " + (job.message || "") },
+      h("span", { class: "spinner sm" }), h("b", null, job.label || "작업 중"),
+      h("span", { class: "sb-msg" }, job.message || ""),
+      h("span", { class: "sb-bar" }, h("span", { style: { width: Math.max(3, pct) + "%" } })),
+      h("span", { class: "num" }, pct + "%"),
+      jobs.length > 1 ? h("span", { class: "faint" }, ` 외 ${jobs.length - 1}개`) : null));
   }
 
   // ───────────────────────────── 토스트·모달
@@ -447,7 +453,7 @@
   D.state = null;
   D.refreshState = async function () {
     D.state = await api("/api/state");
-    renderSidebar();
+    renderChrome();
     return D.state;
   };
   D.project = () => (D.state && D.state.project) || null;
@@ -468,16 +474,8 @@
     if (!sb) return;
     D.clear(sb);
     const proj = D.project();
-    sb.appendChild(h("div", { class: "brand", onclick: () => D.go("home") },
-      h("div", { class: "brand-mark" }, D.icon("lens")),
-      h("div", null, h("div", { class: "brand-name" }, "돋보기"), h("div", { class: "brand-sub" }, "대회 데이터 분석"))));
-    if (proj && proj.loaded) {
-      const s = proj.settings;
-      sb.appendChild(h("div", { class: "project-chip", title: proj.root, onclick: () => D.go("settings") },
-        h("div", { class: "pc-name" }, s.name || proj.root),
-        h("div", { class: "pc-meta" }, (D.TASK_LABEL[s.task] || "과제 미정") + " · " + ((proj.metric_info && proj.metric_info.label) || s.metric || "지표 미정"))));
-    }
     const cur = D.route.name;
+    let n = 0;
     for (const g of NAV) {
       if (g.group) sb.appendChild(h("div", { class: "nav-group" }, g.group));
       for (const [name, label, icon] of g.items) {
@@ -485,7 +483,9 @@
         const disabled = needsProject && !(proj && proj.loaded);
         if (D.STATIC && !(D.STATIC.pages || []).includes(name)) continue;
         const badge = D.navBadges[name];
-        sb.appendChild(h("div", { class: "nav-item" + (cur === name ? " active" : "") + (disabled ? " disabled" : ""), title: disabled ? "대회 폴더를 먼저 여세요" : label, onclick: () => D.go(name) },
+        const key = ++n <= 10 ? (n % 10) : null;
+        sb.appendChild(h("div", { class: "nav-item" + (cur === name ? " active" : "") + (disabled ? " disabled" : ""), role: "button",
+          title: disabled ? "대회 폴더를 먼저 여세요" : label + (key !== null ? ` (Ctrl+${key})` : ""), onclick: () => { if (!disabled) D.go(name); } },
           D.icon(icon), h("span", null, label),
           badge ? h("span", { class: "nav-badge " + badge.kind }, badge.text) : null));
       }
@@ -495,19 +495,102 @@
       const days = Math.ceil((end - new Date()) / 86400000);
       sb.appendChild(h("div", { class: "dday" }, days >= 0 ? ["대회 마감까지 ", h("b", null, "D-" + days)] : "대회가 끝났습니다"));
     }
-    const dark = document.documentElement.dataset.theme === "dark";
-    sb.appendChild(h("div", { class: "sidebar-foot" },
-      h("button", { class: "icon-btn", title: dark ? "밝은 테마" : "어두운 테마", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon")),
-      h("span", { class: "ver", title: D.state && !D.state.lightgbm ? "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" : "" },
-        D.state ? "v" + D.state.version + " · 모델 " + (D.state.lightgbm ? "LightGBM" : "scikit-learn") : "")));
   }
-  D.renderSidebar = renderSidebar;
+
+  /* 제목 표시줄: 로고, 지금 연 대회, 폴더 열기·탐색 접기·테마 */
+  function renderTitlebar() {
+    const tb = document.getElementById("titlebar");
+    if (!tb) return;
+    D.clear(tb);
+    const proj = D.project();
+    const dark = document.documentElement.dataset.theme === "dark";
+    tb.appendChild(h("div", { class: "tb-brand", onclick: () => D.go("home"), title: "시작 화면" },
+      h("span", { class: "brand-mark" }, D.logo()), h("span", { class: "brand-name" }, "돋보기")));
+    if (proj && proj.loaded) {
+      const s = proj.settings;
+      tb.appendChild(h("span", { class: "tb-sep" }, "/"));
+      tb.appendChild(h("span", { class: "tb-project", title: proj.root, onclick: () => D.go("settings") },
+        h("b", null, s.name || proj.root),
+        h("span", { class: "tb-meta" }, (D.TASK_LABEL[s.task] || "과제 미정") + ", " + ((proj.metric_info && proj.metric_info.label) || s.metric || "지표 미정"))));
+    } else if (D.STATIC) {
+      tb.appendChild(h("span", { class: "tb-sep" }, "/"));
+      tb.appendChild(h("span", { class: "tb-project" }, h("b", null, D.STATIC.project || "보고서"), h("span", { class: "tb-meta" }, "보고서")));
+    }
+    tb.appendChild(h("span", { class: "grow" }));
+    if (!D.STATIC) tb.appendChild(h("button", { class: "tb-btn", title: "대회 폴더 열기 (Ctrl+O)", onclick: openFolder }, D.icon("folder"), h("span", null, "폴더 열기")));
+    tb.appendChild(h("button", { class: "tb-btn icon", title: "탐색 창 접기·펴기 (Ctrl+B)", onclick: toggleNav }, D.icon("panel")));
+    tb.appendChild(h("button", { class: "tb-btn icon", title: dark ? "밝은 테마로" : "어두운 테마로", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon")));
+  }
+
+  /* 상태 표시줄: 폴더, 데이터 크기, 진행 중 작업, 모델 엔진·버전 */
+  function renderStatusbar() {
+    const sb = document.getElementById("statusbar");
+    if (!sb) return;
+    D.clear(sb);
+    const proj = D.project();
+    const left = h("div", { class: "sb-left" });
+    if (D.STATIC) {
+      left.appendChild(h("span", null, `읽기 전용 보고서 · ${D.STATIC.created_at || ""} 기준`));
+    } else if (proj && proj.loaded) {
+      const sh = proj.shapes || {};
+      left.appendChild(h("span", { class: "sb-path", title: proj.root, onclick: () => D.go("settings") }, D.icon("folder"), proj.root));
+      if (sh.train) left.appendChild(h("span", { class: "num" }, `train ${D.fmt.int(sh.train[0])}×${sh.train[1]}`));
+      if (sh.test) left.appendChild(h("span", { class: "num" }, `test ${D.fmt.int(sh.test[0])}×${sh.test[1]}`));
+      const comp = proj.settings.competition || {};
+      if (comp.end_date) {
+        const days = Math.ceil((new Date(comp.end_date + "T23:59:59") - new Date()) / 86400000);
+        left.appendChild(h("span", { class: days >= 0 && days <= 3 ? "sb-hot" : "" }, days >= 0 ? `마감 D-${days}` : "대회 끝남"));
+      }
+    } else {
+      left.appendChild(h("span", { class: "faint" }, "대회 폴더를 열지 않았습니다"));
+    }
+    sb.appendChild(left);
+    sb.appendChild(h("div", { class: "sb-jobs", id: "sb-jobs" }));
+    sb.appendChild(h("div", { class: "sb-right" },
+      D.state ? h("span", { title: D.state.lightgbm ? "" : "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" },
+        "모델 " + (D.state.lightgbm ? "LightGBM" : "scikit-learn")) : null,
+      D.state ? h("span", null, "v" + D.state.version) : null));
+    renderJobs();
+  }
+
+  function renderChrome() {
+    renderTitlebar();
+    renderSidebar();
+    renderStatusbar();
+  }
+  D.renderSidebar = renderChrome;
+
+  function toggleNav() {
+    const app = document.getElementById("app");
+    app.classList.toggle("nav-collapsed");
+    try { localStorage.setItem("dotbogi-nav", app.classList.contains("nav-collapsed") ? "collapsed" : "open"); } catch (e) { /* 무시 */ }
+  }
+
+  async function openFolder() {
+    const p = await D.browse({ mode: "folder", start: D.project() ? D.project().root : "" });
+    if (p) D.busy(null, () => D.openProject(p));
+  }
+
+  /* 데스크톱 단축키: Ctrl+O 폴더 열기, Ctrl+B 탐색 접기, Ctrl+1~0 화면 이동 */
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || document.querySelector(".modal-back")) return;
+    const k = e.key.toLowerCase();
+    if (k === "o" && !D.STATIC) { e.preventDefault(); openFolder(); return; }
+    if (k === "b") { e.preventDefault(); toggleNav(); return; }
+    if (/^[0-9]$/.test(k)) {
+      const items = NAV.flatMap((g) => g.items).filter(([name]) => !D.STATIC || (D.STATIC.pages || []).includes(name));
+      const idx = k === "0" ? 9 : Number(k) - 1;
+      const target = items[idx];
+      const proj = D.project();
+      if (target && (target[0] === "home" || (proj && proj.loaded) || D.STATIC)) { e.preventDefault(); D.go(target[0]); }
+    }
+  });
 
   function toggleTheme() {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem("dotbogi-theme", next); } catch (e) { /* 저장 못 해도 괜찮음 */ }
-    renderSidebar();
+    renderChrome();
     D.render();
   }
 
@@ -540,7 +623,8 @@
     if (name !== "home" && !(proj && proj.loaded)) name = "home";
     if (D.STATIC && (name === "home" || !(D.STATIC.pages || []).includes(name))) name = "overview";
     const page = D.pages[name] || D.pages.home;
-    renderSidebar();
+    renderChrome();
+    document.title = (page.title ? page.title + " - " : "") + "돋보기";
     const top = document.getElementById("topbar");
     const body = document.getElementById("content");
     D.clear(top); D.clear(body);
@@ -570,12 +654,8 @@
     try { theme = localStorage.getItem("dotbogi-theme"); } catch (e) { /* 무시 */ }
     if (!theme) theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     document.documentElement.dataset.theme = theme;
-    if (D.STATIC) {
-      document.body.classList.add("static");
-      const main = document.querySelector(".main");
-      if (main) main.insertBefore(h("div", { class: "static-banner" }, "돋보기 보고서 · ", h("b", null, D.STATIC.project || ""), ` · ${D.STATIC.created_at || ""} 기준. `,
-        "읽기 전용입니다. 실행·수정은 돋보기 프로그램에서 할 수 있습니다."), main.firstChild);
-    }
+    try { if (localStorage.getItem("dotbogi-nav") === "collapsed") document.getElementById("app").classList.add("nav-collapsed"); } catch (e) { /* 무시 */ }
+    if (D.STATIC) document.body.classList.add("static");
     try {
       await D.refreshState();
       for (const j of (D.state.jobs || [])) {
