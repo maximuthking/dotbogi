@@ -80,7 +80,7 @@
 
 ### 데스크톱 앱 (Windows)
 
-설치 파일 `Dotbogi-Setup-1.0.0.exe`를 실행하면 끝입니다. 파이썬이 필요 없고, 관리자 권한 없이 사용자 폴더에 설치되며, 시작 메뉴에 **돋보기**가 생깁니다.
+[릴리스 페이지](https://github.com/maximuthking/dotbogi/releases/latest)에서 `Dotbogi-Setup-1.0.0.exe`를 받아 실행하면 끝입니다. 파이썬이 필요 없고, 관리자 권한 없이 사용자 폴더에 설치되며, 시작 메뉴에 **돋보기**가 생깁니다.
 제거는 Windows 설정의 '앱'에서 합니다. 대회 폴더의 `.dotbogi` 기록은 지우지 않습니다.
 
 - 자체 창으로 뜹니다. 노션 데스크톱 앱처럼 제목 표시줄 없이 위쪽 줄을 끌어 옮기고, 두 번 누르면 최대화합니다.
@@ -171,7 +171,7 @@ dotbogi report 대회폴더 -o report.html [--adversarial]
 
 <br>
 
-인터넷이 막힌 캐글 노트북이라면 설치 파일(`.whl`)을 데이터셋으로 올린 뒤 `pip install --no-deps`로 설치하세요.
+인터넷이 막힌 캐글 노트북이라면 [릴리스 페이지](https://github.com/maximuthking/dotbogi/releases/latest)의 `.whl` 파일을 데이터셋으로 올린 뒤 `pip install --no-deps`로 설치하세요.
 
 ```python
 import dotbogi
