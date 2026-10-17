@@ -114,7 +114,7 @@ with sync_playwright() as pw:
         pg.click("button:has-text('실행하기')")
         settle(pg, 800)
         shot(pg, "06_drift_adversarial")
-        pg.click("button:has-text('빼고 보기') >> nth=0")
+        pg.click("button:has-text('빼기') >> nth=0")
         pg.click("button:has-text('다시 실행')")
         settle(pg, 800)
         assert pg.locator("text=이번 결과에서 뺀 컬럼").count() == 1
@@ -168,6 +168,26 @@ with sync_playwright() as pw:
         shot(pg, "13_detail_modal", full=False)
         pg.keyboard.press("Escape")
         step("실험 추가·스크립트 안내·상세 창")
+        # 겹친 창에서 Esc는 맨 위 창만 닫는다
+        pg.click("button:has-text('실험 추가')")
+        settle(pg)
+        pg.click(".modal .field:has-text('OOF') button:has-text('찾아보기')")
+        settle(pg)
+        assert pg.locator(".modal-back").count() == 2
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(300)
+        assert pg.locator(".modal-back").count() == 1, "Esc 한 번에 창이 모두 닫혔습니다"
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(300)
+        # 실험 삭제
+        before = pg.locator("table.t tbody tr").count()
+        pg.click("button[title='삭제 (휴지통으로)'] >> nth=0")
+        settle(pg)
+        pg.click(".modal button:has-text('삭제')")
+        settle(pg, 800)
+        after = pg.locator("table.t tbody tr").count()
+        assert after == before - 1, f"삭제가 안 됩니다 ({before} → {after})"
+        step("겹친 창 Esc, 실험 삭제")
 
         # ── 앙상블
         nav(pg, "ensemble")

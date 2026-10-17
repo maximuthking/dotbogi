@@ -263,6 +263,13 @@ class Project:
                 from .metrics import default_metric
                 s["metric"] = default_metric(s["task"] or "regression", self.sample, self.target_col(),
                                              s["submission_format"])
+            if self.guess is not None:
+                from .metrics import METRICS
+                m = METRICS.get(s["metric"])
+                if m is not None:
+                    why = {"proba": "제출 양식이 확률(소수)을 받는 것 같아", "label": "제출 양식이 라벨(정수·클래스)을 받는 것 같아",
+                           "value": "값을 예측하는 회귀라"}[m.needs]
+                    self.guess.reasons.append(f"{why} 평가 지표를 '{m.label}'(으)로 골랐습니다. 대회 안내와 다르면 바꾸세요.")
             self.cache.clear()
             self.loaded_at = time.time()
             self.save_settings()
