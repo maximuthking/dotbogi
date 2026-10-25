@@ -21,7 +21,8 @@ from .analysis.checks import run_checks
 from .analysis.cv import STRATEGIES, fold_summary, make_folds, recommend
 from .analysis.features import build_matrix
 from .analysis.profile import profile_column
-from .experiments import (Ledger, cv_lb_analysis, frame_pred, lb_noise, make_submission, oof_frame,
+from .experiments import (Ledger, cv_lb_analysis, frame_pred, lb_noise, make_submission, make_submission_multi,
+                          oof_frame,
                           suggest_final)
 from .io import TABLE_EXTS, LoadError, file_signature, read_table
 from .jobs import JobManager
@@ -48,6 +49,48 @@ class App:
     def ledger(self) -> Ledger:
         return Ledger(self.require().dir)
 
+    def _truth(self, p: Project) -> dict:
+        """채점용 정답. 타깃이 여러 개이고 과제 유형이 같으면 (행, 타깃) 2차원, 아니면 첫 타깃 1차원."""
+        if "truth" in p.cache:
+            return p.cache["truth"]
+        from .analysis.common import encode_target
+        s = p.settings
+        targets = [t for t in s["target"] if t in p.train.columns]
+        y, mask, classes = p.encoded_target()
+        out = {"y": y, "mask": mask, "classes": classes, "classes_by_target": [classes], "targets": targets[:1],
+               "task": s["task"], "multi": False, "note": None}
+        if len(targets) > 1 and y is not None:
+            if s["task"] == "multiclass":
+                out["note"] = "다중분류 타깃이 여러 개인 대회는 첫 타깃 기준으로 계산합니다."
+            else:
+                cols, cbt, mk, mixed = [np.asarray(y, dtype="float64")], [classes], mask.copy(), None
+                for t in targets[1:]:
+                    if s["task"] == "binary":
+                        cl = _classes(p.train[t])
+                        if len(cl) != 2:
+                            mixed = t
+                            break
+                        yt, mt, cl = encode_target(p.train[t], "binary", cl)
+                    else:
+                        yt, mt, cl = encode_target(p.train[t], "regression", [])
+                        if not mt.any():
+                            mixed = t
+                            break
+                    cols.append(np.asarray(yt, dtype="float64"))
+                    cbt.append(cl)
+                    mk &= mt
+                if mixed:
+                    out["note"] = f"타깃 '{mixed}'의 과제 유형이 첫 타깃과 달라, 앙상블·흔들림 계산은 첫 타깃 기준입니다."
+                else:
+                    out.update({"y": np.column_stack(cols), "mask": mk, "classes_by_target": cbt, "targets": targets,
+                                "multi": True})
+        p.cache["truth"] = out
+        return out
+
+    def _pred(self, p: Project, frame: pd.DataFrame) -> np.ndarray:
+        """저장된 OOF·test 예측 표를 정답과 같은 모양의 배열로."""
+        return frame_pred(frame, p.settings["task"], self._truth(p)["targets"])
+
     def state(self) -> dict:
         p = self.project
         out = {
@@ -72,6 +115,12 @@ class App:
                 "notices": list(getattr(p, "notices", []) or []),
                 "load_error": getattr(p, "load_error", None),
             }
+            if p.loaded and len(s.get("target") or []) > 1:
+                try:
+                    tr = self._truth(p)
+                    out["project"]["multi_target"] = {"targets": list(s["target"]), "multi": tr["multi"], "note": tr["note"]}
+                except Exception:
+                    pass
         return out
 
     # ═════════════════════════════════════════ 최근 프로젝트 / 폴더 고르기
@@ -286,6 +335,7 @@ class App:
             s["name"] = str(patch["name"])[:80]
         if heavy:
             p.invalidate()
+        p.invalidate("sheet")  # 데이터 표의 예측·오차 열은 타깃·지표 설정에 따라 달라진다
         p.save_settings()
         return self.state()
 
@@ -655,11 +705,19 @@ class App:
                 yt, mt, cl, task_t, metric_t = y, mask, classes, s["task"], s["metric"]
             else:
                 from .analysis.common import encode_target
-                task_t = _guess_task(p.train[t])
-                cl = _classes(p.train[t]) if task_t != "regression" else []
-                yt, mt, cl = encode_target(p.train[t], task_t, cl)
-                metric_t = s["metric"] if (s["metric"] in M.METRICS and task_t in M.METRICS[s["metric"]].tasks) \
-                    else M.DEFAULT_METRIC[task_t]
+                tr0 = self._truth(p)
+                if tr0["multi"]:  # 다중 타깃: 첫 타깃과 같은 과제·지표
+                    task_t, cl = s["task"], tr0["classes_by_target"][ti]
+                    yt, mt = tr0["y"][:, ti], np.isfinite(tr0["y"][:, ti])
+                    if task_t == "binary":
+                        _, mt, _ = encode_target(p.train[t], "binary", cl)
+                    metric_t = s["metric"]
+                else:
+                    task_t = _guess_task(p.train[t])
+                    cl = _classes(p.train[t]) if task_t != "regression" else []
+                    yt, mt, cl = encode_target(p.train[t], task_t, cl)
+                    metric_t = s["metric"] if (s["metric"] in M.METRICS and task_t in M.METRICS[s["metric"]].tasks) \
+                        else M.DEFAULT_METRIC[task_t]
             if len(np.unique(yt[mt])) <= 1:
                 raise LoadError(f"타깃 '{t}'의 값이 하나뿐이라 학습할 수 없습니다.")
             n_cls = len(cl) if task_t == "multiclass" else 2
@@ -671,18 +729,26 @@ class App:
         primary = per_target[0]
         res = primary["res"]
         job.update(0.93, "결과 저장 중")
+        tr = self._truth(p)
+        multi = tr["multi"] and len(per_target) == len(tr["targets"])
         ids = p.train[s["id_col"]].to_numpy() if s["id_col"] in p.train.columns else None
-        oof = oof_frame(res["_oof"], s["task"], classes, ids, fold)
+        oof_arr = np.column_stack([pt["res"]["_oof"] for pt in per_target]) if multi else res["_oof"]
+        oof = oof_frame(oof_arr, s["task"], classes, ids, fold, tr["targets"] if multi else None)
         test_df = sub = None
         sub_note = ""
         if res["_test"] is not None:
             tid = p.test[s["id_col"]].to_numpy() if (s["id_col"] and s["id_col"] in p.test.columns) else None
-            test_df = oof_frame(res["_test"], s["task"], classes, tid)
+            test_arr = np.column_stack([pt["res"]["_test"] for pt in per_target]) if multi else res["_test"]
+            test_df = oof_frame(test_arr, s["task"], classes, tid, targets=tr["targets"] if multi else None)
             if p.sample is not None:
                 try:
-                    sub = make_submission(res["_test"], p.sample, p.test, s["id_col"], s["task"], classes,
-                                          s["submission_format"], s["metric"])
-                    for pt in per_target[1:]:
+                    if multi:
+                        sub = make_submission_multi(test_arr, p.sample, p.test, s["id_col"], s["task"], tr["targets"],
+                                                    tr["classes_by_target"], s["metric"])
+                    else:
+                        sub = make_submission(res["_test"], p.sample, p.test, s["id_col"], s["task"], classes,
+                                              s["submission_format"], s["metric"])
+                    for pt in ([] if multi else per_target[1:]):
                         if pt["target"] in p.sample.columns:
                             cols_ = [c for c in (s["id_col"], pt["target"]) if c and c in p.sample.columns]
                             st_ = make_submission(pt["res"]["_test"], p.sample[cols_], p.test, s["id_col"],
@@ -702,8 +768,8 @@ class App:
                 cv_value = float(np.mean([pt["res"]["cv"] for pt in per_target]))
                 cv_std = None
             notes = (notes + " " if notes else "") + (
-                f"타깃 {len(per_target)}개를 따로 학습했습니다. CV는 타깃별 점수의 평균, "
-                f"OOF(앙상블·흔들림 계산)는 첫 타깃 '{targets[0]}' 기준입니다.")
+                f"타깃 {len(per_target)}개를 따로 학습했습니다. CV는 타깃별 점수의 평균입니다."
+                + ("" if multi else f" OOF(앙상블·흔들림 계산)는 첫 타깃 '{targets[0]}' 기준입니다."))
         e = self.ledger().add(
             name, s["metric"], cv_value, cv_std, jsonable(res["fold_scores"]), source="baseline",
             params={"engine": res["engine"], "learning_rate": lr, "n_features": res["n_features"],
@@ -776,9 +842,10 @@ class App:
         if key not in cache:
             try:
                 o = led.read_oof(e)
-                y, mask, _ = p.encoded_target()
-                pred = frame_pred(o, p.settings["task"])
-                ok = mask & (~np.isnan(pred).any(axis=1) if pred.ndim == 2 else ~np.isnan(pred))
+                tr = self._truth(p)
+                y, mask = tr["y"], tr["mask"]
+                pred = self._pred(p, o)
+                ok = mask & _valid(pred)
                 cache[key] = float(M.score(metric, y[ok], pred[ok])) if ok.sum() > 1 else None
             except Exception:
                 cache[key] = None
@@ -813,9 +880,10 @@ class App:
                               notes=data.get("notes", ""), tags=data.get("tags") or [], source="manual",
                               oof=oof, test_pred=test, submission=sub)
         if oof is not None and e.get("cv") is None:
-            y, mask, classes = p.encoded_target()
-            pred = frame_pred(oof, p.settings["task"])
-            ok = mask & (~np.isnan(pred).any(axis=1) if pred.ndim == 2 else ~np.isnan(pred))
+            tr = self._truth(p)
+            y, mask = tr["y"], tr["mask"]
+            pred = self._pred(p, oof)
+            ok = mask & _valid(pred)
             try:
                 cv = M.score(p.settings["metric"], y[ok], pred[ok])
                 e = self.ledger().update(e["id"], cv=cv)
@@ -843,6 +911,20 @@ class App:
                     names = cand
                 else:
                     raise LoadError(f"다중분류 OOF에는 클래스별 확률 컬럼 {len(classes)}개가 필요합니다.")
+            pred = df[names].to_numpy(dtype="float64")
+        elif self._truth(p)["multi"]:
+            targets = self._truth(p)["targets"]
+            names = []
+            for t in targets:
+                hit = next((c for c in (f"pred:{t}", t, f"pred_{t}", f"{t}_pred") if c in df.columns), None)
+                names.append(hit)
+            if None in names:
+                num = [c for c in df.columns if c not in (id_col, "id", "row", "fold", "index", "Unnamed: 0")
+                       and pd.api.types.is_numeric_dtype(df[c])]
+                if len(num) != len(targets):
+                    raise LoadError(f"다중 타깃 OOF에는 타깃마다 예측 열이 필요합니다 ({', '.join(targets)}). "
+                                    "열 이름을 타깃 이름으로 맞춰 주세요.")
+                names = num
             pred = df[names].to_numpy(dtype="float64")
         else:
             if not cand:
@@ -876,7 +958,7 @@ class App:
             raise LoadError(f"OOF 행 수({len(df):,})가 train({n:,})과 다르고, 맞출 ID 컬럼도 없습니다.")
         fold = p.load_folds()
         ids = p.train[id_col].to_numpy() if id_col and id_col in p.train.columns else None
-        return oof_frame(pred, task, classes, ids, fold), how
+        return oof_frame(pred, task, classes, ids, fold, self._truth(p)["targets"]), how
 
     def _sub_to_test_frame(self, p: Project, sub: pd.DataFrame) -> pd.DataFrame | None:
         """제출 파일에서 앙상블용 test 예측을 뽑는다 (sample_submission 순서)."""
@@ -891,10 +973,17 @@ class App:
             if pos.index.has_duplicates or set(k_s) - set(pos.index):
                 return None
             sub = sub.iloc[pos.loc[k_s].to_numpy()].reset_index(drop=True)
+        tr = self._truth(p)
         if s["task"] == "multiclass":
             if s["submission_format"] != "proba_columns":
                 return None
             arr = sub[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")
+        elif tr["multi"]:
+            if not all(t in sub.columns for t in tr["targets"]):
+                return None
+            arr = sub[tr["targets"]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")
+            ids = sub[id_col].to_numpy() if id_col in sub.columns else None
+            return oof_frame(arr, s["task"], s["classes"], ids, targets=tr["targets"])
         else:
             v = pd.to_numeric(sub[cols[0]], errors="coerce")
             if v.isna().all():
@@ -932,17 +1021,18 @@ class App:
         oof = led.read_oof(e)
         if oof is None:
             raise LoadError("이 실험에는 OOF 예측이 없어 계산할 수 없습니다.")
-        y, mask, classes = p.encoded_target()
-        pred = frame_pred(oof, s["task"])
-        ok = mask & (~np.isnan(pred).any(axis=1) if pred.ndim == 2 else ~np.isnan(pred))
+        tr = self._truth(p)
+        y, mask = tr["y"], tr["mask"]
+        pred = self._pred(p, oof)
+        ok = mask & _valid(pred)
         pred_b = None
         if params.get("id_b"):
             eb = led.get(params["id_b"])
             ob = led.read_oof(eb) if eb else None
             if ob is None:
                 raise LoadError("비교할 실험에 OOF 예측이 없습니다.")
-            pred_b = frame_pred(ob, s["task"])
-            ok &= ~np.isnan(pred_b).any(axis=1) if pred_b.ndim == 2 else ~np.isnan(pred_b)
+            pred_b = self._pred(p, ob)
+            ok &= _valid(pred_b)
         n_test = len(p.test) if p.test is not None else len(p.train)
         share = s["competition"].get("public_share") or 0.3
         public_rows = int(params.get("public_rows") or round(n_test * float(share)))
@@ -950,34 +1040,37 @@ class App:
                        pred_b=pred_b[ok] if pred_b is not None else None)
         res["public_share"] = share
         res["share_assumed"] = not s["competition"].get("public_share")
+        res["targets"] = tr["targets"] if tr["multi"] else None
         return jsonable(res)
 
     def ensemble(self, params: dict) -> dict:
-        self.require()
-        job = self.jobs.submit("ensemble", "앙상블 가중치 찾기", self._ensemble_job, params)
+        p = self.require()
+        job = self.jobs.submit("ensemble", "앙상블 가중치 찾기", self._ensemble_job, p, params)
         return {"job": job.to_dict(False)}
 
-    def _ensemble_job(self, job, params: dict):
+    def _ensemble_job(self, job, p: Project, params: dict):
         from .ensemble import run_ensemble
-        p = self.require()
         s = p.settings
-        led = self.ledger()
+        led = Ledger(p.dir)
         ids = params.get("ids") or []
         exps = [led.get(i) for i in ids]
         exps = [e for e in exps if e is not None]
         if len(exps) < 2:
             raise LoadError("OOF가 있는 실험을 2개 이상 고르세요.")
-        y, mask, classes = p.encoded_target()
+        tr = self._truth(p)
+        y, mask = tr["y"], tr["mask"]
         preds, names = [], []
         ok = mask.copy()
         for e in exps:
             o = led.read_oof(e)
             if o is None:
                 raise LoadError(f"'{e['name']}'에는 OOF가 없습니다.")
-            pr = frame_pred(o, s["task"])
+            pr = self._pred(p, o)
+            if tr["multi"] and np.isnan(pr).all(axis=0).any():
+                raise LoadError(f"'{e['name']}'의 OOF에는 일부 타깃의 예측이 없습니다 (예전 버전에서 첫 타깃만 저장한 기록).")
             preds.append(pr)
             names.append(e["name"])
-            ok &= ~np.isnan(pr).any(axis=1) if pr.ndim == 2 else ~np.isnan(pr)
+            ok &= _valid(pr)
         if ok.sum() < 20:
             raise LoadError("고른 실험들이 공통으로 가진 OOF 행이 너무 적습니다.")
         job.update(0.1, "가중치 찾는 중")
@@ -990,6 +1083,11 @@ class App:
                            method=params.get("method") or "hill", use_rank=use_rank)
         res["rows_used"] = int(ok.sum())
         res["ids"] = [e["id"] for e in exps]
+        if tr["multi"]:  # 타깃별 점수 (섞은 결과 기준)
+            from .ensemble import blend_test
+            bl = blend_test([pr[ok] for pr in preds], res["_weights"], use_rank)
+            res["by_target"] = [{"target": t, "score": float(M.score(s["metric"], y[ok][:, j], bl[:, j]))}
+                                for j, t in enumerate(tr["targets"])]
         res["has_all_tests"] = all((e.get("files") or {}).get("test") for e in exps)
         res["_weights"] = res["_weights"].tolist()
         p.cache["ensemble:last"] = res
@@ -1009,11 +1107,12 @@ class App:
         if any(e is None for e in exps):
             raise LoadError("앙상블에 쓴 실험 중 지워진 것이 있습니다. 다시 실행하세요.")
         w = np.asarray(last["_weights"], float)
-        y, mask, classes = p.encoded_target()
-        oofs = [frame_pred(led.read_oof(e), s["task"]) for e in exps]
+        tr = self._truth(p)
+        classes = tr["classes"]
+        oofs = [self._pred(p, led.read_oof(e)) for e in exps]
         blend_oof = blend_test(oofs, w, last["use_rank"])
         ids = p.train[s["id_col"]].to_numpy() if s["id_col"] in p.train.columns else None
-        oof_df = oof_frame(blend_oof, s["task"], classes, ids, p.load_folds())
+        oof_df = oof_frame(blend_oof, s["task"], classes, ids, p.load_folds(), tr["targets"])
         test_df = sub = None
         note = ""
         if last["has_all_tests"]:
@@ -1022,11 +1121,15 @@ class App:
                 note = why
             else:
                 bt = blend_test(aligned, w, last["use_rank"])
-                test_df = oof_frame(bt, s["task"], classes, ref_ids)
+                test_df = oof_frame(bt, s["task"], classes, ref_ids, targets=tr["targets"])
                 if p.sample is not None and ref_ids is not None:
                     try:  # aligned는 sample_submission 순서
-                        sub = make_submission(bt, p.sample, None, s["id_col"], s["task"], classes,
-                                              s["submission_format"], s["metric"])
+                        if tr["multi"]:
+                            sub = make_submission_multi(bt, p.sample, None, s["id_col"], s["task"], tr["targets"],
+                                                        tr["classes_by_target"], s["metric"])
+                        else:
+                            sub = make_submission(bt, p.sample, None, s["id_col"], s["task"], classes,
+                                                  s["submission_format"], s["metric"])
                     except ValueError as ex:
                         note = f"제출 파일을 만들지 못했습니다: {ex}"
         cv = last["honest"]["score"] if last.get("honest") else last["score"]
@@ -1064,9 +1167,9 @@ class App:
                 missing = set(key) - set(pos.index)
                 if missing:
                     return None, None, f"'{e['name']}'의 test 예측에 없는 ID가 {len(missing):,}개 있어 제출 파일을 만들지 않았습니다."
-                out.append(frame_pred(f.iloc[pos.loc[key].to_numpy()], s["task"]))
+                out.append(self._pred(p, f.iloc[pos.loc[key].to_numpy()]))
             return out, ref.to_numpy(), ""
-        preds = [frame_pred(f, s["task"]) for f in frames]
+        preds = [self._pred(p, f) for f in frames]
         if len({pr.shape for pr in preds}) == 1:
             return preds, None, "ID가 없어 행 순서가 같다고 보고 섞었습니다. 제출 파일은 만들지 않았습니다."
         return None, None, "실험마다 test 예측 행 수가 달라 섞을 수 없습니다."
@@ -1411,8 +1514,156 @@ class App:
                 "index": [int(i) for i in page.index],
                 "rows": [[_cell(v) for v in r] for r in page.itertuples(index=False)]}
 
+    # ═════════════════════════════════════════ 데이터 표
+    def _sheet_frame(self, p: Project, which: str, exp_id: str | None):
+        """표로 볼 데이터와 덧붙인 열 이름. train에는 실험의 OOF 예측·오차 열을 붙일 수 있다."""
+        df = {"train": p.train, "test": p.test, "sample_submission": p.sample}.get(which)
+        if df is None:
+            raise LoadError(f"{which} 데이터가 없습니다.")
+        if not (isinstance(df.index, pd.RangeIndex) and df.index.start == 0 and df.index.step == 1):
+            df = df.reset_index(drop=True)
+        if not exp_id or which != "train":
+            return df, []
+        key = f"sheet:aug:{exp_id}"
+        if key not in p.cache:
+            for k in [k for k in p.cache if k.startswith("sheet:aug:")]:
+                del p.cache[k]  # 큰 표 사본은 하나만 들고 있는다
+            p.cache[key] = self._with_prediction(p, df, exp_id)
+        return p.cache[key]
+
+    def _with_prediction(self, p: Project, df: pd.DataFrame, exp_id: str):
+        led = self.ledger()
+        e = led.get(exp_id)
+        if e is None:
+            raise LoadError("실험을 찾을 수 없습니다.")
+        o = led.read_oof(e)
+        if o is None:
+            raise LoadError("이 실험에는 OOF 예측이 없습니다.")
+        s = p.settings
+        task = s["task"]
+        truth = self._truth(p)
+        pred = self._pred(p, o)
+        y, mask = truth["y"], truth["mask"]
+        if len(pred) != len(df):
+            raise LoadError("OOF 행 수가 train과 달라 붙일 수 없습니다.")
+        add: dict[str, object] = {}
+        if task == "multiclass":
+            cls = np.asarray(truth["classes"], dtype=object)
+            ok = ~np.isnan(pred).any(axis=1)
+            top = np.nan_to_num(pred, nan=-1.0).argmax(axis=1)
+            add["예측"] = pd.Series(np.where(ok, cls[top] if len(cls) else top, None), dtype="object")
+            p_true = np.full(len(df), np.nan)
+            v = ok & mask
+            p_true[v] = pred[v, y[v].astype(int)]
+            add["정답 확률"] = p_true
+            add["오차"] = 1.0 - p_true
+        else:
+            targets = truth["targets"]
+            P2 = pred if pred.ndim == 2 else pred[:, None]
+            Y2 = y if y.ndim == 2 else y[:, None]
+            for j, t in enumerate(targets):
+                sfx = f" · {t}" if len(targets) > 1 else ""
+                pj = P2[:, j]
+                add["예측" + sfx] = pj
+                err = np.full(len(df), np.nan)
+                v = mask & ~np.isnan(pj)
+                if task == "regression":
+                    err[v] = pj[v] - Y2[v, j]
+                    add["오차" + sfx] = err
+                    add["|오차|" + sfx] = np.abs(err)
+                else:
+                    err[v] = np.abs(Y2[v, j] - pj[v])
+                    add["오차" + sfx] = err
+        names = []
+        extra = {}
+        for k, v in add.items():
+            name = f"{k} ({e['name']})"
+            while name in df.columns or name in extra:
+                name += "'"
+            extra[name] = v
+            names.append(name)
+        aug = pd.concat([df, pd.DataFrame(extra, index=df.index)], axis=1)
+        return aug, names
+
+    def _sheet_view(self, p: Project, params: dict):
+        which = params.get("which") or "train"
+        exp_id = params.get("exp") or None
+        df, extra = self._sheet_frame(p, which, exp_id)
+        filters = params.get("filters") or []
+        search = str(params.get("search") or "").strip()
+        sort = params.get("sort")
+        asc = bool(params.get("asc", True))
+        key = json.dumps([which, exp_id, filters, search, sort, asc], ensure_ascii=False, sort_keys=True, default=str)
+        cached = p.cache.get("sheet:view")
+        if not cached or cached[0] != key:
+            view = df
+            for f in filters:
+                view = _apply_filter(view, f)
+            if search:
+                view = view[_search_mask(view, search)]
+            if sort and sort in view.columns:
+                view = view.sort_values(sort, ascending=asc, na_position="last", kind="stable")
+            cached = (key, view.index.to_numpy())
+            p.cache["sheet:view"] = cached
+        return df, extra, cached[1], which
+
+    def sheet(self, params: dict) -> dict:
+        """데이터 표: 필터·검색·정렬한 결과에서 offset부터 limit행. 스크롤하면 필요한 구간만 다시 부른다."""
+        p = self.require()
+        df, extra, order, which = self._sheet_view(p, params)
+        try:
+            offset = max(0, int(params.get("offset") or 0))
+            limit = min(500, max(1, int(params.get("limit") or 200)))
+        except (TypeError, ValueError):
+            raise LoadError("offset·limit은 정수여야 합니다.")
+        idx = order[offset: offset + limit]
+        page = df.iloc[idx]
+        cols = []
+        for c in df.columns:
+            ci = p.column(str(c))
+            cols.append({"name": str(c), "kind": ci.kind if ci else ("pred" if c in extra else "other"),
+                         "numeric": bool(pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c])),
+                         "extra": c in extra,
+                         "role": "target" if c in p.settings["target"] else ("id" if c == p.settings["id_col"] else None)})
+        return {"which": which, "columns": cols, "total": int(len(df)), "matched": int(len(order)), "offset": offset,
+                "positions": [int(i) for i in idx],
+                "rows": [[_cell(v) for v in r] for r in page.itertuples(index=False)]}
+
+    def sheet_export(self, params: dict) -> dict:
+        """지금 표에 보이는 결과(필터·정렬·보이는 열)를 CSV로 저장한다. 엑셀에서 한글이 깨지지 않게 BOM을 붙인다."""
+        p = self.require()
+        df, _, order, which = self._sheet_view(p, params)
+        cols = [c for c in (params.get("columns") or []) if c in df.columns] or list(df.columns)
+        out_dir = p.dir / "exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{which}-{time.strftime('%Y%m%d-%H%M%S')}.csv"
+        df.iloc[order][cols].to_csv(path, index=False, encoding="utf-8-sig")
+        return {"path": str(path), "rows": int(len(order)), "columns": len(cols)}
+
 
 # ═════════════════════════════════════════ 도우미
+def _valid(pred: np.ndarray) -> np.ndarray:
+    """예측이 있는 행 (2차원이면 모든 열이 있는 행)"""
+    return ~np.isnan(pred).any(axis=1) if pred.ndim == 2 else ~np.isnan(pred)
+
+
+def _search_mask(df: pd.DataFrame, text: str) -> np.ndarray:
+    """모든 열에서 찾기: 글자 열은 포함, 숫자 열은 같은 값."""
+    out = np.zeros(len(df), dtype=bool)
+    try:
+        num = float(text.replace(",", ""))
+    except ValueError:
+        num = None
+    for c in df.columns:
+        col = df[c]
+        if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_bool_dtype(col):
+            if num is not None:
+                out |= (col.to_numpy(dtype="float64", na_value=np.nan) == num)
+        else:
+            out |= col.astype("string").str.contains(text, case=False, regex=False, na=False).to_numpy(dtype=bool)
+    return out
+
+
 class _SubProgress:
     """안쪽 작업의 진행률(0~1)을 바깥 작업의 일부 구간으로 바꿔 진행률이 뒤로 가지 않게 한다."""
 

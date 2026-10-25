@@ -73,6 +73,8 @@
           h("div", { class: "grid g2 mt12" },
             h("div", null, h("div", { class: "bold small" }, "가중치"), wEl),
             h("div", null, h("div", { class: "bold small" }, "모델을 하나씩 더할 때 점수"), hEl)),
+          res.by_target ? h("div", { class: "mt12" }, h("div", { class: "bold small" }, "타깃별 점수 (섞은 결과, 같은 데이터로 잼)"),
+            h("div", { class: "row small" }, res.by_target.map((b) => h("span", { class: "badge" }, `${b.target} ${f.score(b.score)}`)))) : null,
           h("div", { class: "bold small mt12" }, "OOF 예측 상관 (낮을수록 섞을 때 얻는 게 많음)"), cEl,
           h("div", { class: "row mt12" }, h("span", { class: "grow small muted" }, res.has_all_tests ? "저장하면 블렌딩한 OOF·test 예측·제출 파일이 새 실험으로 기록됩니다." : "고른 실험 중 test 예측이 없는 것이 있어 제출 파일은 만들 수 없습니다(OOF만 저장)."),
             h("button", { class: "btn primary needs-server", onclick: (e) => D.busy(e.currentTarget, async () => {

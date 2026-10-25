@@ -220,9 +220,14 @@ def metrics_for(task: str) -> list[dict]:
 
 
 def score(metric: str, y: np.ndarray, pred: np.ndarray) -> float:
+    """y가 (행, 타깃) 2차원이면 다중 타깃: 타깃별 점수의 평균 (사용자 지표는 표 전체를 그대로 넘긴다)."""
     m = METRICS[metric]
     y = np.asarray(y)
     pred = np.asarray(pred)
+    if y.ndim == 2 and m.tasks[0] != "multiclass" and metric != CUSTOM_KEY:
+        if pred.shape != y.shape:
+            raise ValueError(f"예측 모양 {pred.shape}이 정답 모양 {y.shape}과 다릅니다.")
+        return float(np.mean([score(metric, y[:, j], pred[:, j]) for j in range(y.shape[1])]))
     if m.tasks[0] != "multiclass":
         y = y.astype(float)
     return m.fn(y, pred)

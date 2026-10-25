@@ -12,7 +12,8 @@
       const tab = params.tab || "power";
       const tabs = h("div", { class: "tabs" });
       const body = h("div", { class: "col", style: { gap: "16px" } });
-      const names = [["power", "예측력 순위"], ["corr", "상관 관계"], ["chart", "그래프 만들기"], ["data", "데이터 보기"]];
+      if (params.tab === "data") { D.go("sheet"); return; }  // 데이터 보기는 '데이터 표' 화면으로 옮김
+      const names = [["power", "예측력 순위"], ["corr", "상관 관계"], ["chart", "그래프 만들기"]];
       for (const [k, label] of names) {
         if (D.STATIC && (k === "chart" || k === "data")) continue;
         tabs.appendChild(h("button", { class: k === tab ? "on" : "", onclick: () => D.go("explore", { tab: k }) }, label));

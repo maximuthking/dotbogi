@@ -11,6 +11,7 @@
   D.logo = () => { const t = document.createElement("template"); t.innerHTML = LOGO; return t.content.firstChild; };
 
   const ICONS = {
+    filter: '<path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/>',
     chevrons: '<path d="M17 17l-5-5 5-5"/><path d="M11 17l-5-5 5-5"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     table: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M10 10v9"/>',
@@ -465,7 +466,7 @@
 
   const NAV = [
     { group: null, items: [["home", "시작", "home"]] },
-    { group: "데이터 이해", items: [["overview", "개요", "overview"], ["checks", "데이터 점검", "shield"], ["columns", "컬럼", "columns"],
+    { group: "데이터 이해", items: [["overview", "개요", "overview"], ["checks", "데이터 점검", "shield"], ["columns", "컬럼", "columns"], ["sheet", "데이터 표", "table"],
       ["drift", "train vs test", "versus"], ["explore", "탐색", "explore"]] },
     { group: "모델·제출", items: [["cv", "검증 설계", "layers"], ["experiments", "실험", "flask"], ["ensemble", "앙상블", "merge"],
       ["submission", "제출 검사", "upload"]] },

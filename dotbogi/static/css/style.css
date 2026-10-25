@@ -506,6 +506,65 @@ table.stats tr.diff td { background: var(--warn-soft); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: center; font-size: 14px; color: var(--text-2); }
 kbd { font-family: var(--font); font-size: 12px; color: var(--muted); background: var(--surface-3); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
 
+/* ───────────── 데이터 표 (스프레드시트) */
+.sheet-card { display: flex; flex-direction: column; overflow: hidden; }
+.sheet-tools { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.sheet-tools .select.sm { max-width: 260px; }
+.sheet-search { width: 220px; }
+.sheet-chips { padding: 8px 12px 0; gap: 6px; }
+.sheet-scroll { overflow: auto; position: relative; outline: none; border-top: 1px solid transparent; }
+.sheet-scroll:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 45%, transparent); }
+table.sheet { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+table.sheet th, table.sheet td {
+  height: 28px; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); box-sizing: border-box;
+}
+table.sheet th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface-2); color: var(--muted); font-weight: 500; text-align: left;
+  user-select: none; cursor: pointer;
+}
+table.sheet th:hover { color: var(--text); background: var(--surface-3); }
+table.sheet th.sorted { color: var(--text); }
+table.sheet th.extra { background: color-mix(in srgb, var(--ok-soft) 70%, var(--surface-2)); }
+table.sheet th .th-name { overflow: hidden; text-overflow: ellipsis; }
+table.sheet th .badge { margin-left: 6px; height: 17px; font-size: 11px; vertical-align: 1px; }
+table.sheet th .arrow { margin-left: 4px; font-size: 10px; }
+table.sheet th .rz { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 3; }
+table.sheet th .rz:hover { background: color-mix(in srgb, var(--primary) 40%, transparent); }
+table.sheet th.num { text-align: right; }
+table.sheet .rn {
+  position: sticky; left: 0; z-index: 1; background: var(--surface-2); color: var(--faint); text-align: right;
+  font-variant-numeric: tabular-nums; font-size: 12px;
+}
+table.sheet th.rn { z-index: 4; cursor: default; }
+table.sheet td { font-family: var(--mono), var(--font); font-size: 12.5px; color: var(--text); cursor: cell; }
+table.sheet td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.sheet td.n::after { content: "–"; color: var(--faint); font-style: italic; font-family: var(--font); }
+table.sheet td.extra { background: color-mix(in srgb, var(--ok-soft) 35%, transparent); }
+table.sheet td.sel { box-shadow: inset 0 0 0 2px var(--primary); background: var(--primary-soft); }
+table.sheet tr:hover td:not(.rn):not(.sp) { background: var(--hover); }
+table.sheet tr:hover td.sel { background: var(--primary-soft); }
+table.sheet .sp, table.sheet tr.sp td { padding: 0; border-right: 0; }
+table.sheet tr.sp td { border-bottom: 0; }
+table.sheet .ld { display: inline-block; width: 60%; height: 8px; border-radius: 4px; background: var(--surface-3); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
+.sheet-foot {
+  display: flex; align-items: center; gap: 12px; min-height: 34px; padding: 4px 12px; border-top: 1px solid var(--border);
+  background: var(--surface-2); font-size: 12.5px;
+}
+.sheet-ref { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sheet-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono), var(--font); }
+.sheet-val.faint { font-family: var(--font); }
+.sheet-status { color: var(--muted); white-space: nowrap; }
+.pop {
+  position: fixed; z-index: 80; background: var(--surface); border-radius: 8px; box-shadow: var(--pop); padding: 12px;
+  max-width: calc(100vw - 24px);
+}
+:root[data-theme="dark"] .pop { background: #252525; }
+.pop-list { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+.pop-item { padding: 3px 6px; border-radius: 4px; gap: 8px; }
+.pop-item:hover { background: var(--hover); }
+
 /* 폴더 고르기 */
 .browser-list { border: 1px solid var(--border); border-radius: var(--radius); max-height: 360px; overflow-y: auto; padding: 4px; }
 .browser-item { display: flex; align-items: center; gap: 10px; padding: 4px 8px; font-size: 14px; border-radius: 4px; user-select: none; }

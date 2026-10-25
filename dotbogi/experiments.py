@@ -268,21 +268,23 @@ def _json_default(o):
 
 
 # ─────────────────────────────────────────── 예측 ↔ 표 변환
-def pred_columns(task: str, classes: list) -> list[str]:
+def pred_columns(task: str, classes: list, targets: list | None = None) -> list[str]:
     if task == "multiclass":
         return [f"p_{c}" for c in classes]
+    if targets and len(targets) > 1:
+        return [f"pred:{t}" for t in targets]  # 다중 타깃: 타깃마다 한 열
     return ["pred"]
 
 
 def oof_frame(pred: np.ndarray, task: str, classes: list, ids: np.ndarray | None,
-              fold: np.ndarray | None = None) -> pd.DataFrame:
+              fold: np.ndarray | None = None, targets: list | None = None) -> pd.DataFrame:
     df = pd.DataFrame({"row": np.arange(len(pred))})
     if ids is not None:
         df["id"] = ids
     if fold is not None:
         df["fold"] = fold
-    cols = pred_columns(task, classes)
     arr = np.asarray(pred, dtype="float64")
+    cols = pred_columns(task, classes, targets if (arr.ndim == 2 and task != "multiclass") else None)
     if arr.ndim == 1:
         df[cols[0]] = arr
     else:
@@ -291,10 +293,22 @@ def oof_frame(pred: np.ndarray, task: str, classes: list, ids: np.ndarray | None
     return df
 
 
-def frame_pred(df: pd.DataFrame, task: str) -> np.ndarray:
+def frame_pred(df: pd.DataFrame, task: str, targets: list | None = None) -> np.ndarray:
+    """저장된 예측 표 → 배열. targets가 2개 이상이면 (행, 타깃). 첫 타깃만 있던 옛 기록은 나머지를 NaN으로."""
+    if task != "multiclass" and targets and len(targets) > 1:
+        out = np.full((len(df), len(targets)), np.nan)
+        for j, t in enumerate(targets):
+            c = f"pred:{t}"
+            if c in df.columns:
+                out[:, j] = df[c].to_numpy(dtype="float64")
+            elif j == 0 and "pred" in df.columns:
+                out[:, 0] = df["pred"].to_numpy(dtype="float64")
+        return out
     cols = [c for c in df.columns if c == "pred" or c.startswith("p_")]
     if task == "multiclass":
         return df[[c for c in cols if c.startswith("p_")]].to_numpy(dtype="float64")
+    if not cols:  # 다중 타깃 기록을 한 타깃으로 읽을 때: 첫 타깃
+        cols = [c for c in df.columns if str(c).startswith("pred:")]
     return df[cols[0]].to_numpy(dtype="float64")
 
 
@@ -344,6 +358,24 @@ def make_submission(test_pred: np.ndarray, sample: pd.DataFrame, test: pd.DataFr
             sub[pred_cols[0]] = np.array(classes, dtype=object)[lab]
             if pd.api.types.is_numeric_dtype(sample[pred_cols[0]]):
                 sub[pred_cols[0]] = pd.to_numeric(sub[pred_cols[0]])
+    return sub
+
+
+def make_submission_multi(test_pred: np.ndarray, sample: pd.DataFrame, test: pd.DataFrame | None,
+                          id_col: str | None, task: str, targets: list, classes_by_target: list,
+                          metric: str | None) -> pd.DataFrame:
+    """다중 타깃: (행, 타깃) 예측을 sample_submission의 타깃 열마다 채운다."""
+    p = np.asarray(test_pred)
+    present = [t for t in targets if t in sample.columns]
+    if not present:
+        raise ValueError("sample_submission에 타깃 이름의 열이 없어 어느 열에 넣을지 모릅니다.")
+    sub = sample.copy()
+    for j, t in enumerate(targets):
+        if t not in sample.columns:
+            continue
+        cols = [c for c in (id_col, t) if c and c in sample.columns]
+        part = make_submission(p[:, j], sample[cols], test, id_col, task, classes_by_target[j], "value", metric)
+        sub[t] = part[t].to_numpy()
     return sub
 
 

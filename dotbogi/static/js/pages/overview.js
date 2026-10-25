@@ -105,7 +105,11 @@
         s.classes.length > 12 ? ` 외 ${s.classes.length - 12}개` : "") : null,
       ov.reasons && ov.reasons.length ? h("details", { class: "small muted" }, h("summary", { style: { cursor: "pointer" } }, "어떻게 추론했나요?"),
         h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, ov.reasons.map((r) => h("li", null, r)))) : null,
-      D.callout("info", "평가 지표는 대회 안내문과 같게 맞추세요. 대회 전용 계산식은 설정에서 파이썬 파일로 등록할 수 있습니다."));
+      D.callout("info", "평가 지표는 대회 안내문과 같게 맞추세요. 대회 전용 계산식은 설정에서 파이썬 파일로 등록할 수 있습니다."),
+      proj.multi_target ? (proj.multi_target.multi
+        ? D.callout("ok", h("div", null, h("b", null, `타깃 ${proj.multi_target.targets.length}개를 함께 다룹니다: `), proj.multi_target.targets.join(", "), ". ",
+          "기본 모델은 타깃마다 학습하고, CV·앙상블·Public LB 흔들림은 타깃별 점수의 평균으로 계산합니다."))
+        : D.callout("warn", proj.multi_target.note || "타깃이 여러 개지만 첫 타깃 기준으로 계산합니다.")) : null);
     if (D.STATIC) {
       return D.card("대회 설정", null, h("dl", { class: "kv" },
         h("dt", null, "타깃"), h("dd", null, s.target.join(", ") || "없음"),

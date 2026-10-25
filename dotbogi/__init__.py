@@ -22,7 +22,7 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
         metric: str | None = None, submission=None) -> dict:
     """학습 스크립트에서 실험 하나를 대장에 기록한다.
 
-    oof:       train 행 순서의 OOF 예측 (1차원, 다중분류는 (행, 클래스) 2차원). 결측 행은 NaN.
+    oof:       train 행 순서의 OOF 예측 (1차원, 다중분류는 (행, 클래스), 다중 타깃은 (행, 타깃) 2차원). 결측 행은 NaN.
     test_pred: test 파일 행 순서의 예측. sample_submission이 있으면 제출 파일도 만들어 둔다.
     cv:        생략하고 oof를 주면 설정된 지표로 자동 계산한다.
     """
@@ -30,11 +30,14 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
     import pandas as pd
 
     from . import metrics as M
-    from .experiments import Ledger, make_submission, oof_frame
+    from .api import App
+    from .experiments import Ledger, make_submission, make_submission_multi, oof_frame
 
     p = _load_project(project)
     s = p.settings
-    y, mask, classes = p.encoded_target()
+    truth = App()._truth(p)
+    y, mask, classes = truth["y"], truth["mask"], truth["classes"]
+    multi, targets = truth["multi"], truth["targets"]
     task = s["task"]
     metric = metric or s["metric"]
     if metric not in M.METRICS:
@@ -44,10 +47,15 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
 
     def as_array(v):
         arr = np.asarray(v.values if isinstance(v, (pd.Series, pd.DataFrame)) else v, dtype="float64")
-        if task == "binary" and arr.ndim == 2 and arr.shape[1] == 2:
-            arr = arr[:, 1]
+        if task == "binary" and arr.ndim == 2 and arr.shape[1] == 2 and not multi:
+            arr = arr[:, 1]  # (음성, 양성) 확률 두 열이면 양성 열 (다중 타깃이면 타깃 두 개로 본다)
         if task != "multiclass" and arr.ndim == 2 and arr.shape[1] == 1:
             arr = arr[:, 0]
+        if multi:
+            if arr.ndim != 2 or arr.shape[1] != len(targets):
+                raise ValueError(f"다중 타깃 예측은 (행 수, 타깃 {len(targets)}개) 모양이어야 합니다. "
+                                 f"받은 모양: {arr.shape}. 타깃 순서: {targets}")
+            return arr
         if task == "multiclass" and (arr.ndim != 2 or arr.shape[1] != len(classes)):
             raise ValueError(f"다중분류 예측은 (행 수, 클래스 {len(classes)}개) 모양의 확률 배열이어야 합니다. "
                              f"받은 모양: {arr.shape}. 클래스 순서: {classes}")
@@ -59,7 +67,7 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
         arr = as_array(oof)
         if arr.shape[0] != len(p.train):
             raise ValueError(f"oof 길이({arr.shape[0]})가 train 행 수({len(p.train)})와 다릅니다.")
-        oof_df = oof_frame(arr, task, classes, ids, p.load_folds())
+        oof_df = oof_frame(arr, task, classes, ids, p.load_folds(), targets if multi else None)
         if cv is None:
             ok = mask & (~np.isnan(arr).any(axis=1) if arr.ndim == 2 else ~np.isnan(arr))
             cv = M.score(metric, y[ok], arr[ok])
@@ -71,9 +79,13 @@ def log(project: str, name: str, cv: float | None = None, oof=None, test_pred=No
                 raise ValueError(f"test_pred 길이({arr.shape[0]})가 test 행 수({len(p.test)})와 다릅니다.")
             if s["id_col"] and s["id_col"] in p.test.columns:
                 tid = p.test[s["id_col"]].to_numpy()
-        test_df = oof_frame(arr, task, classes, tid)
+        test_df = oof_frame(arr, task, classes, tid, targets=targets if multi else None)
         if submission is None and p.sample is not None:
-            sub = make_submission(arr, p.sample, p.test, s["id_col"], task, classes, s["submission_format"], metric)
+            if multi:
+                sub = make_submission_multi(arr, p.sample, p.test, s["id_col"], task, targets,
+                                            truth["classes_by_target"], metric)
+            else:
+                sub = make_submission(arr, p.sample, p.test, s["id_col"], task, classes, s["submission_format"], metric)
     if submission is not None:
         sub = submission if isinstance(submission, pd.DataFrame) else pd.read_csv(submission)
     return Ledger(p.dir).add(name, metric, cv, lb_public=lb, notes=notes, tags=tags, params=params or {},

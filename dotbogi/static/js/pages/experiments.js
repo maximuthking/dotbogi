@@ -161,7 +161,8 @@
         h("div", null,
           h("div", { class: "small muted" }, `Public LB ≈ ${f.int(r.rows)}행` + (r.share_assumed ? " (Public 비율을 몰라 test의 30%로 가정. 설정에서 바꿀 수 있습니다)" : ` (test의 ${f.pct(r.public_share, 0)})`)),
           h("div", { style: { fontSize: "15px", marginTop: "4px" } }, `같은 모델이라도 Public 점수는 우연히 `, h("b", null, "±" + f.score(r.std)), ` 정도 흔들립니다.`),
-          h("div", { class: "small muted" }, `90% 범위 ${f.score(r.p05)} ~ ${f.score(r.p95)}`), el),
+          h("div", { class: "small muted" }, `90% 범위 ${f.score(r.p05)} ~ ${f.score(r.p95)}`),
+          r.targets ? h("div", { class: "tiny muted" }, `타깃 ${r.targets.length}개(${r.targets.join(", ")})의 점수 평균 기준`) : null, el),
         h("div", null, r.win_rate !== undefined ? h("div", { class: "col" },
           h("div", { class: "small muted" }, `'${ea.name}' vs '${eb.name}'`),
           h("div", { style: { fontSize: "15px" } }, `Public에서 '${ea.name}'이(가) 더 좋게 나올 확률 `, h("b", null, f.pct(r.win_rate, 0))),
@@ -191,9 +192,9 @@
       h("dt", null, "ID"), h("dd", null, h("code", null, e.id))));
     if (e.notes) body.appendChild(h("div", { class: "callout info" }, D.icon("info"), h("div", null, e.notes)));
     const PARAM = { engine: "모델 엔진", learning_rate: "학습률", n_features: "피처 수", strategy: "검증 방법", n_splits: "폴드 수",
-      excluded: "뺀 컬럼", mean_best_iteration: "평균 트리 수", use_rank: "순위로 섞기", method: "섞는 방법", in_sample_score: "같은 데이터로 잰 점수", model: "모델" };
+      excluded: "뺀 컬럼", mean_best_iteration: "평균 트리 수", cv_by_target: "타깃별 CV", use_rank: "순위로 섞기", method: "섞는 방법", in_sample_score: "같은 데이터로 잰 점수", model: "모델" };
     const VAL = { sklearn: "HistGradientBoosting", lightgbm: "LightGBM", hill: "힐클라이밍", mean: "단순 평균", true: "예", false: "아니오", ...((D.state && D.state.strategies) || {}) };
-    const fmtV = (k, v) => (Array.isArray(v) ? (v.length ? v.join(", ") : "없음") : typeof v === "number" ? f.num(v, 6) : typeof v === "object" && v !== null ? JSON.stringify(v) : VAL[String(v)] || String(v));
+    const fmtV = (k, v) => (Array.isArray(v) ? (v.length ? v.join(", ") : "없음") : typeof v === "number" ? f.num(v, 6) : typeof v === "object" && v !== null ? (k === "cv_by_target" ? Object.entries(v).map(([t, s]) => `${t} ${f.score(s)}`).join(" · ") : JSON.stringify(v)) : VAL[String(v)] || String(v));
     const params = Object.entries(e.params || {}).filter(([k]) => k !== "weights");
     if (params.length) body.appendChild(h("div", null, h("div", { class: "bold small" }, "설정"),
       h("table", { class: "stats" }, h("tbody", null, params.map(([k, v]) => h("tr", null, h("td", null, PARAM[k] || k), h("td", { style: { textAlign: "left" } }, fmtV(k, v))))))));

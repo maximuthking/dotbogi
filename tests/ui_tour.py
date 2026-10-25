@@ -120,20 +120,29 @@ with sync_playwright() as pw:
         assert pg.locator("text=이번 결과에서 뺀 컬럼").count() == 1
         step("적대적 검증 + 컬럼 빼고 다시 실행")
 
-        # ── 탐색 4개 탭
-        for tab in ("power", "corr", "chart", "data"):
+        # ── 탐색 3개 탭
+        for tab in ("power", "corr", "chart"):
             nav(pg, "explore", f"?tab={tab}")
             shot(pg, f"07_explore_{tab}")
         nav(pg, "explore", "?tab=chart&x=feat&y=noise&color=target&which=train")
         shot(pg, "07_explore_scatter")
-        nav(pg, "explore", "?tab=data")
-        pg.select_option(".card select.select.sm >> nth=0", "feat")
-        pg.select_option(".card select.select.sm >> nth=1", ">")
-        pg.fill("input[placeholder='값']", "1")
-        pg.click("button:has-text('필터 추가')")
+        nav(pg, "sheet")
+        assert pg.locator("table.sheet tbody tr[data-r]").count() > 5, "데이터 표에 행이 없습니다"
+        pg.evaluate("document.querySelector('.sheet-scroll').scrollTop = 1e9")
         settle(pg)
-        assert "전체" in pg.inner_text(".content"), "필터 결과 표시가 없습니다"
-        step("데이터 보기 필터 동작")
+        pg.locator("table.sheet thead th:has-text('feat')").first.click()
+        settle(pg)
+        pg.click(".sheet-tools button:has-text('필터')")
+        pg.select_option(".pop select >> nth=0", "feat")
+        pg.select_option(".pop select >> nth=1", ">")
+        pg.fill(".pop input", "1")
+        pg.click(".pop button:has-text('추가')")
+        settle(pg)
+        assert "중" in pg.inner_text(".sheet-status"), "필터 결과 표시가 없습니다"
+        pg.locator("table.sheet tbody tr[data-r] td[data-c]").nth(1).click()
+        pg.keyboard.press("ArrowDown")
+        shot(pg, "07_sheet", full=False)
+        step("데이터 표 스크롤·정렬·필터·셀 이동")
 
         # ── 검증 설계 → 기본 모델 2번
         nav(pg, "cv")

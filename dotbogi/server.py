@@ -62,6 +62,8 @@ def _routes(app: App):
         ("GET", "/api/correlation"): lambda q, b: app.correlation(q1(q, "method", "spearman")),
         ("POST", "/api/explore"): lambda q, b: app.explore(b),
         ("POST", "/api/rows"): lambda q, b: app.rows(b),
+        ("POST", "/api/sheet"): lambda q, b: app.sheet(b),
+        ("POST", "/api/sheet/export"): lambda q, b: app.sheet_export(b),
         ("POST", "/api/kaggle/import"): lambda q, b: app.kaggle_import(b),
         ("POST", "/api/report"): lambda q, b: app.report(b),
         ("GET", "/api/job"): lambda q, b: _job(app, q1(q, "id", "")),
