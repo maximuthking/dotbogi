@@ -32,11 +32,34 @@ from .submission import check_submission, compare_submissions, fix_submission
 from .utils import as_label, jsonable, sample_index, to_float
 
 HOME = Path(os.environ.get("DOTBOGI_HOME", Path.home() / ".dotbogi"))
+RELEASES_API = "https://api.github.com/repos/maximuthking/dotbogi/releases/latest"
+RELEASES_PAGE = "https://github.com/maximuthking/dotbogi/releases/latest"
+DEFAULT_PREFS = {"update_check": True, "lang": None}
+
+
+def load_prefs() -> dict:
+    """대회와 상관없는 앱 설정 (~/.dotbogi/prefs.json)"""
+    try:
+        data = json.loads((HOME / "prefs.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    return {**DEFAULT_PREFS, **{k: v for k, v in data.items() if k in DEFAULT_PREFS}}
+
+
+def _version_tuple(v: str) -> tuple:
+    parts = []
+    for x in str(v).lstrip("vV").split("."):
+        digits = "".join(ch for ch in x if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts + [0] * (3 - len(parts)))
 
 
 class App:
+    MAX_TABS = 8
+
     def __init__(self):
-        self.project: Project | None = None
+        self.project: Project | None = None          # 지금 보고 있는 대회 (활성 탭)
+        self.projects: dict[str, Project] = {}       # 열어 둔 대회들 (탭 순서)
         self.jobs = JobManager(workers=2)
         self.started = time.time()
 
@@ -48,6 +71,38 @@ class App:
 
     def ledger(self) -> Ledger:
         return Ledger(self.require().dir)
+
+    def _for(self, p: Project) -> "App":
+        """p를 '지금 대회'로 보는 App. 작업 도중 다른 탭으로 바꿔도 작업은 시작한 대회에만 쓴다."""
+        a = object.__new__(App)
+        a.__dict__ = dict(self.__dict__)
+        a.project = p
+        return a
+
+    # ═════════════════════════════════════════ 탭 (대회 여러 개)
+    def tabs(self) -> list[dict]:
+        items = list(self.projects.values())
+        if self.project is not None and str(self.project.root) not in self.projects:
+            items.append(self.project)
+        return [{"root": str(p.root), "name": p.settings.get("name") or p.root.name, "loaded": p.loaded,
+                 "error": bool(getattr(p, "load_error", None)), "active": p is self.project} for p in items]
+
+    def switch_project(self, path: str) -> dict:
+        p = self.projects.get(str(Path(path)))
+        if p is None:
+            raise LoadError("열려 있지 않은 대회입니다.")
+        self.project = p
+        return self.state()
+
+    def close_project(self, path: str) -> dict:
+        key = str(Path(path))
+        p = self.projects.pop(key, None)
+        if p is None and not (self.project is not None and str(self.project.root) == key):
+            raise LoadError("열려 있지 않은 대회입니다.")
+        if self.project is p or (self.project is not None and str(self.project.root) == key):
+            rest = list(self.projects.values())
+            self.project = rest[-1] if rest else None
+        return self.state()
 
     def _truth(self, p: Project) -> dict:
         """채점용 정답. 타깃이 여러 개이고 과제 유형이 같으면 (행, 타깃) 2차원, 아니면 첫 타깃 1차원."""
@@ -98,6 +153,8 @@ class App:
             "recent": self.recent(), "kinds": list(KINDS), "strategies": STRATEGIES,
             "platforms": PLATFORMS, "home": str(Path.home()),
             "jobs": [j.to_dict(False) for j in self.jobs.running()],
+            "prefs": load_prefs(),
+            "tabs": self.tabs(),
             "project": None,
         }
         if p is not None:
@@ -124,6 +181,54 @@ class App:
         return out
 
     # ═════════════════════════════════════════ 최근 프로젝트 / 폴더 고르기
+    # ═════════════════════════════════════════ 앱 설정·업데이트 알림
+    def set_prefs(self, patch: dict) -> dict:
+        prefs = load_prefs()
+        if "update_check" in patch:
+            prefs["update_check"] = bool(patch["update_check"])
+        if "lang" in patch:
+            if patch["lang"] not in (None, "ko", "en"):
+                raise LoadError("화면 언어는 ko 또는 en입니다.")
+            prefs["lang"] = patch["lang"]
+        HOME.mkdir(parents=True, exist_ok=True)
+        (HOME / "prefs.json").write_text(json.dumps(prefs, ensure_ascii=False, indent=1), encoding="utf-8")
+        return prefs
+
+    def check_update(self, force: bool = False) -> dict:
+        """GitHub 최신 릴리스와 지금 버전을 비교한다. 하루에 한 번만 묻고, 인터넷이 없으면 조용히 넘어간다."""
+        if not force and not load_prefs()["update_check"]:
+            return {"enabled": False, "current": __version__}
+        cache_f = HOME / "update.json"
+        info = None
+        try:
+            info = json.loads(cache_f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        if force or not info or time.time() - float(info.get("checked_at", 0)) > 86400:
+            import urllib.request
+            try:
+                req = urllib.request.Request(RELEASES_API, headers={"User-Agent": f"dotbogi/{__version__}",
+                                                                    "Accept": "application/vnd.github+json"})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    rel = json.loads(r.read().decode("utf-8"))
+                setup = next((x["browser_download_url"] for x in rel.get("assets", [])
+                              if str(x.get("name", "")).lower().endswith(".exe")), None)
+                info = {"checked_at": time.time(), "latest": str(rel.get("tag_name") or "").lstrip("vV"),
+                        "url": rel.get("html_url") or RELEASES_PAGE, "setup_url": setup,
+                        "published_at": rel.get("published_at")}
+                try:
+                    HOME.mkdir(parents=True, exist_ok=True)
+                    cache_f.write_text(json.dumps(info), encoding="utf-8")
+                except OSError:
+                    pass
+            except Exception as e:  # 인터넷이 없거나 GitHub가 응답하지 않음
+                if not info:
+                    return {"enabled": True, "current": __version__, "error": f"새 버전을 확인하지 못했습니다 ({type(e).__name__})."}
+        latest = info.get("latest") or __version__
+        return {"enabled": True, "current": __version__, "latest": latest, "url": info.get("url") or RELEASES_PAGE,
+                "setup_url": info.get("setup_url"), "newer": _version_tuple(latest) > _version_tuple(__version__),
+                "checked_at": info.get("checked_at")}
+
     def recent(self) -> list[dict]:
         f = HOME / "recent.json"
         try:
@@ -188,7 +293,13 @@ class App:
         if not str(path).strip():
             raise LoadError("폴더 경로를 적거나 '찾아보기'로 고르세요.")
         project = Project(pth)
-        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, project, key=str(project.root))
+        key = str(project.root)
+        if key in self.projects and self.projects[key].loaded:  # 이미 열린 대회: 다시 불러오지 않고 그 탭으로
+            self.project = self.projects[key]
+            return {"switched": True, "root": key}
+        if key not in self.projects and len(self.projects) >= self.MAX_TABS:
+            raise LoadError(f"대회를 {self.MAX_TABS}개까지 열어 둘 수 있습니다. 탭을 하나 닫고 다시 여세요.")
+        job = self.jobs.submit("load", "데이터 불러오기", self._load_job, project, key=key)
         return {"job": job.to_dict(False)}
 
     def _load_job(self, job, project: Project):
@@ -197,10 +308,11 @@ class App:
         except Exception as e:
             # 열지 못해도 이 폴더는 기억해 둔다 → 화면에서 파일을 직접 골라 다시 열 수 있게
             project.load_error = str(e) if isinstance(e, (LoadError, ValueError)) else f"{type(e).__name__}: {e}"
-            if self.project is None or not self.project.loaded or self.project.root == project.root:
-                self.project = project
+            self.projects[str(project.root)] = project  # 탭으로 남겨 두고, 화면에서 파일을 직접 골라 다시 열게
+            self.project = project
             raise
         project.load_error = None
+        self.projects[str(project.root)] = project
         self.project = project
         self._remember(project)
         return {"ok": True, "notices": list(project.notices)}
@@ -676,7 +788,7 @@ class App:
                 chk = p.cache["checks"]
             rec = chk["recommend"]
             job.update(0.39, "추천 방법으로 폴드를 만드는 중")
-            self.make_folds({"strategy": rec["strategy"], "n_splits": rec["n_splits"], "seed": 42,
+            self._for(p).make_folds({"strategy": rec["strategy"], "n_splits": rec["n_splits"], "seed": 42,
                              "group_col": rec.get("group_col"), "time_col": rec.get("time_col")})
             fold = p.load_folds()
         lo = 0.4 if job.progress >= 0.39 else 0.05
@@ -756,7 +868,7 @@ class App:
                             sub[pt["target"]] = st_[pt["target"]].to_numpy()
                 except ValueError as ex:
                     sub, sub_note = None, f"제출 파일을 만들지 못했습니다: {ex}"
-        n_prev = sum(1 for e in self.ledger().load() if e.get("source") == "baseline")
+        n_prev = sum(1 for e in Ledger(p.dir).load() if e.get("source") == "baseline")
         name = (params.get("name") or "").strip() or f"기본 모델 #{n_prev + 1}"
         notes = params.get("notes", "") or ""
         cv_value, cv_std = res["cv"], res["cv_std"]
@@ -770,7 +882,7 @@ class App:
             notes = (notes + " " if notes else "") + (
                 f"타깃 {len(per_target)}개를 따로 학습했습니다. CV는 타깃별 점수의 평균입니다."
                 + ("" if multi else f" OOF(앙상블·흔들림 계산)는 첫 타깃 '{targets[0]}' 기준입니다."))
-        e = self.ledger().add(
+        e = Ledger(p.dir).add(
             name, s["metric"], cv_value, cv_std, jsonable(res["fold_scores"]), source="baseline",
             params={"engine": res["engine"], "learning_rate": lr, "n_features": res["n_features"],
                     "strategy": cv["strategy"], "n_splits": cv["n_splits"],
@@ -788,7 +900,7 @@ class App:
 
     def _profiles_job_if_needed(self, job, p):
         if "profiles" not in p.cache:
-            st = self.profiles_status()
+            st = self._for(p).profiles_status()
             if not st["ready"]:
                 self._profiles_job(job, p)
 
@@ -1279,7 +1391,8 @@ class App:
         from .htmlreport import build_report
         p = self.require()
         out = Path(params.get("path") or (p.dir / f"report-{time.strftime('%Y%m%d-%H%M')}.html"))
-        job = self.jobs.submit("report", "보고서 만들기", lambda job: build_report(self, out, job))
+        pinned = self._for(p)
+        job = self.jobs.submit("report", "보고서 만들기", lambda job: build_report(pinned, out, job), project=str(p.root))
         return {"job": job.to_dict(False)}
 
     # ═════════════════════════════════════════ 제출 파일

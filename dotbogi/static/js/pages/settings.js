@@ -19,6 +19,28 @@ def score(y_true, y_pred):
     return 0.5 * (1 - auc) + 0.5 * brier
 `;
 
+  /* 대회와 상관없는 앱 설정: 새 버전 확인 */
+  function appCard() {
+    const prefs = (D.state && D.state.prefs) || {};
+    const res = h("span", { class: "small muted" });
+    const show = (r) => {
+      if (!r) return;
+      if (r.error) res.textContent = r.error;
+      else if (r.enabled === false) res.textContent = "새 버전 확인이 꺼져 있습니다.";
+      else if (r.newer) { D.clear(res).appendChild(h("span", null, `새 버전 ${r.latest}이(가) 있습니다. `, h("a", { href: r.url, target: "_blank", rel: "noopener" }, "릴리스 페이지 열기"))); }
+      else res.textContent = `지금 버전 ${r.current}이(가) 최신입니다.`;
+    };
+    const cb = h("input", { type: "checkbox", checked: prefs.update_check !== false, onchange: async () => {
+      try { D.state.prefs = await D.api("/api/prefs", { body: { update_check: cb.checked } }); if (cb.checked) show(await D.checkUpdate()); else { D.update = null; D.renderSidebar(); show({ enabled: false }); } }
+      catch (e) { D.fail(e); }
+    } });
+    const now = h("button", { class: "btn sm", onclick: () => D.busy(now, async () => show(await D.checkUpdate(true))) }, D.icon("refresh"), "지금 확인");
+    if (D.update) show(D.update);
+    return D.card("앱 설정", { hint: "모든 대회에 함께 적용됩니다" },
+      h("div", { class: "row" }, h("label", { class: "check" }, cb, "새 버전이 나오면 알려 주기"), now, res),
+      h("div", { class: "small muted mt8" }, "하루에 한 번 GitHub에 최신 버전 번호만 물어봅니다. 데이터나 사용 기록은 보내지 않습니다."));
+  }
+
   D.pages.settings = {
     title: "설정",
     subtitle: () => (D.project() ? D.project().root : ""),
@@ -39,6 +61,7 @@ def score(y_true, y_pred):
         const r = await D.api("/api/reload", { body: {} });
         await D.runJob(r.job); await D.refreshState(); D.navBadges = {}; D.toast("파일을 다시 읽었습니다."); D.render();
       }) }, D.icon("refresh"), "디스크에서 다시 읽기");
+      root.appendChild(appCard());
       root.appendChild(D.card("데이터 파일", { hint: "파일을 바꾸면 타깃·ID·지표를 다시 추론합니다" },
         h("div", { class: "col" }, field("train", tr), field("test", te), field("제출 양식 (sample_submission)", ss)),
         h("div", { class: "row mt12" }, h("span", { class: "grow small muted" }, "같은 파일 내용이 바뀌었으면 '디스크에서 다시 읽기'를 누르세요. 큰 CSV는 처음 읽을 때 parquet 사본을 만들어 두고 다음부터 빨리 엽니다."), reloadBtn, applyBtn)));

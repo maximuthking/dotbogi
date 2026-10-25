@@ -268,8 +268,10 @@
     if (!jobs.length) return;
     const job = jobs[0];
     const pct = Math.round((job.progress || 0) * 100);
+    const cur = D.project();
+    const other = job.project && cur && job.project !== cur.root && D.state && (D.state.tabs || []).find((t) => t.root === job.project);
     slot.appendChild(h("span", { class: "job-pill", title: (job.label || "") + " · " + (job.message || "") },
-      h("span", { class: "spinner sm" }), h("b", null, job.label || "작업 중"),
+      h("span", { class: "spinner sm" }), other ? h("span", { class: "job-proj" }, other.name) : null, h("b", null, job.label || "작업 중"),
       h("span", { class: "job-msg" }, job.message || ""),
       h("span", { class: "job-bar" }, h("span", { style: { width: Math.max(3, pct) + "%" } })),
       h("span", { class: "num" }, pct + "%"),
@@ -537,6 +539,10 @@
     } else if (D.STATIC) {
       foot.appendChild(h("div", { class: "side-info" }, D.icon("clock"), h("span", null, `${D.STATIC.created_at || ""} 기준`)));
     }
+    if (D.update && D.update.newer) {
+      foot.appendChild(h("a", { class: "side-update", href: D.update.url, target: "_blank", rel: "noopener", title: "릴리스 페이지 열기" },
+        D.icon("download"), h("span", null, `새 버전 ${D.update.latest} 받기`)));
+    }
     foot.appendChild(h("div", { class: "side-bottom" },
       h("span", { class: "side-ver", title: D.state && !D.state.lightgbm ? "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" : "" },
         D.state ? `v${D.state.version}, ${D.state.lightgbm ? "LightGBM" : "scikit-learn"}` : ""),
@@ -551,6 +557,27 @@
     D.clear(top);
     const proj = D.project();
     top.appendChild(h("button", { class: "icon-btn open-nav", title: "사이드바 열기 (Ctrl+B)", onclick: toggleNav }, D.icon("menu")));
+    const tabs = (!D.STATIC && D.state && D.state.tabs) || [];
+    if (tabs.length) {
+      const strip = h("div", { class: "tabs-strip", role: "tablist", "aria-label": "열린 대회" });
+      for (const t of tabs) {
+        const active = t.active && (name !== "home" || t.error);  // 열지 못한 대회는 시작 화면에서 파일을 고르므로 그 탭이 활성
+        const tab = h("div", { class: "tab" + (active ? " active" : "") + (t.error ? " error" : ""), role: "tab", "aria-selected": active ? "true" : "false",
+          title: t.root + (t.error ? "\n열지 못한 폴더입니다" : ""), onclick: () => D.switchProject(t.root),
+          onauxclick: (e) => { if (e.button === 1) { e.preventDefault(); D.closeProject(t.root); } } },
+        h("span", { class: "tab-logo" }, D.logo()), h("span", { class: "tab-name" }, t.name),
+        h("button", { class: "tab-x", title: "탭 닫기" + (document.body.classList.contains("desktop") ? " (Ctrl+W)" : ""), "aria-label": t.name + " 탭 닫기",
+          onclick: (e) => { e.stopPropagation(); D.closeProject(t.root); } }, D.icon("x")));
+        strip.appendChild(tab);
+      }
+      strip.appendChild(h("button", { class: "tab-add", title: "대회 폴더 열기 (Ctrl+O)", "aria-label": "대회 폴더 열기", onclick: openFolder }, D.icon("plus")));
+      top.appendChild(strip);
+      top.appendChild(h("div", { class: "tb-jobs", id: "tb-jobs" }));
+      top.appendChild(h("div", { class: "win-ctl", id: "win-ctl" }));
+      renderJobs();
+      renderWinCtl();
+      return;
+    }
     const crumbs = h("nav", { class: "crumbs", "aria-label": "위치" });
     const projName = D.STATIC ? (D.STATIC.project || "보고서") : proj && proj.loaded ? (proj.settings.name || proj.root) : null;
     if (projName && name !== "home") {
@@ -634,6 +661,8 @@
   document.addEventListener("keydown", (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || document.querySelector(".modal-back")) return;
     const k = e.key.toLowerCase();
+    if (e.key === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); return; }
+    if (k === "w" && document.body.classList.contains("desktop") && D.project()) { e.preventDefault(); D.closeProject(D.project().root); return; }
     if (k === "o" && !D.STATIC) { e.preventDefault(); openFolder(); return; }
     if (k === "b") { e.preventDefault(); toggleNav(); return; }
     if (/^[0-9]$/.test(k)) {
@@ -676,6 +705,7 @@
   D.render = async function () {
     const seq = ++renderSeq;
     D.route = parseHash();
+    rememberRoute();
     if (D.charts) D.charts.disposeAll();
     let name = D.route.name;
     const proj = D.project();
@@ -708,6 +738,41 @@
     }
   };
   D.isCurrent = (seq) => seq === renderSeq;
+
+  /* 탭: 대회마다 마지막으로 보던 화면을 기억했다가 돌아온다 */
+  D.tabRoutes = {};
+  const rememberRoute = () => {
+    const p = D.project();
+    if (p && p.loaded && D.route.name !== "home") D.tabRoutes[p.root] = location.hash;
+  };
+  D.switchProject = async function (root) {
+    rememberRoute();
+    try {
+      await api("/api/switch", { body: { path: root } });
+      await D.refreshState();
+    } catch (e) { D.fail(e); return; }
+    const p = D.project();
+    const target = D.tabRoutes[root] || (p && p.loaded ? "#/overview" : "#/home");
+    if (location.hash === target) D.render(); else location.hash = target;
+  };
+  D.closeProject = async function (root) {
+    const wasActive = D.project() && D.project().root === root;
+    delete D.tabRoutes[root];
+    try {
+      await api("/api/close", { body: { path: root } });
+      await D.refreshState();
+    } catch (e) { D.fail(e); return; }
+    if (!wasActive) { D.render(); return; }
+    const p = D.project();
+    const target = p ? (D.tabRoutes[p.root] || (p.loaded ? "#/overview" : "#/home")) : "#/home";
+    if (location.hash === target) D.render(); else location.hash = target;
+  };
+  function cycleTab(step) {
+    const tabs = (D.state && D.state.tabs) || [];
+    if (tabs.length < 2) return;
+    const i = Math.max(0, tabs.findIndex((t) => t.active));
+    D.switchProject(tabs[(i + step + tabs.length) % tabs.length].root);
+  }
 
   /* 데스크톱 앱(자기 창) 연결: pywebview가 넣어 주는 window.pywebview.api */
   D.desktop = () => (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder ? window.pywebview.api : null);
@@ -753,5 +818,28 @@
       return;
     }
     D.render();
+    if (!D.STATIC) setTimeout(D.checkUpdate, 1500);
+  };
+
+  /* 새 버전 확인: 하루 한 번 (서버가 결과를 기억). 새 버전이면 사이드바에 표시하고 처음 한 번만 알림 */
+  D.update = null;
+  D.checkUpdate = async function (force) {
+    try {
+      const r = await api("/api/update", { params: force ? { force: "1" } : {} });
+      D.update = r;
+      renderChrome();
+      if (r.newer) {
+        let seen = null;
+        try { seen = localStorage.getItem("dotbogi-update-seen"); } catch (e) { /* 무시 */ }
+        if (seen !== r.latest || force) {
+          D.toast(`돋보기 ${r.latest}이(가) 나왔습니다. 사이드바 아래에서 받을 수 있습니다.`, "ok", 6000);
+          try { localStorage.setItem("dotbogi-update-seen", r.latest); } catch (e) { /* 무시 */ }
+        }
+      }
+      return r;
+    } catch (e) {
+      if (force) throw e;
+      return null;
+    }
   };
 })();

@@ -142,6 +142,12 @@ p { margin: 0 0 8px; }
 .side-info[role="button"]:hover { background: var(--hover); color: var(--text-2); }
 .side-info svg { width: 14px; height: 14px; stroke: currentColor; flex: none; }
 .side-info.hot { color: var(--danger); font-weight: 600; }
+.side-update {
+  display: flex; align-items: center; gap: 8px; margin: 4px 2px 0; padding: 6px 10px; border-radius: var(--radius);
+  background: var(--primary-soft); color: var(--info); font-size: 12.5px; font-weight: 600; text-decoration: none;
+}
+.side-update:hover { text-decoration: none; filter: brightness(0.97); }
+.side-update svg { width: 14px; height: 14px; stroke: currentColor; flex: none; }
 .side-bottom { display: flex; align-items: center; gap: 6px; padding: 6px 4px 0 10px; margin-top: 6px; border-top: 1px solid var(--border); }
 .side-ver { font-size: 12px; color: var(--faint); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -167,6 +173,32 @@ p { margin: 0 0 8px; }
 .crumb-logo svg { width: 16px; height: 16px; opacity: 1; }
 .crumb-sep { color: var(--faint); padding: 0 1px; }
 .tb-jobs { display: flex; align-items: center; min-width: 0; }
+.job-proj { color: var(--muted); font-weight: 500; }
+.job-proj::after { content: " ·"; }
+
+/* 대회 탭 */
+.tabs-strip { display: flex; align-items: center; gap: 2px; flex: 1 1 0; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tabs-strip::-webkit-scrollbar { display: none; }
+.tab {
+  display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 4px 0 10px; border-radius: var(--radius);
+  color: var(--muted); font-size: 13.5px; cursor: pointer; flex: 0 1 184px; min-width: 96px; position: relative;
+}
+.tab:hover { background: var(--hover); color: var(--text-2); }
+.tab.active { background: var(--press); color: var(--text); font-weight: 600; }
+.tab.error .tab-name { color: var(--danger); }
+.tab-logo { width: 14px; height: 14px; flex: none; display: block; opacity: 0.85; }
+.tab-logo svg { width: 14px; height: 14px; display: block; }
+.tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-x {
+  border: 0; background: transparent; color: inherit; width: 20px; height: 20px; border-radius: 4px; display: grid; place-items: center;
+  flex: none; opacity: 0; cursor: pointer;
+}
+.tab:hover .tab-x, .tab.active .tab-x, .tab-x:focus-visible { opacity: 0.7; }
+.tab-x:hover { background: var(--press); opacity: 1; }
+.tab-x svg { width: 12px; height: 12px; stroke: currentColor; }
+.tab-add { border: 0; background: transparent; color: var(--muted); width: 28px; height: 28px; border-radius: var(--radius); display: grid; place-items: center; flex: none; cursor: pointer; }
+.tab-add:hover { background: var(--hover); color: var(--text); }
+.tab-add svg { width: 15px; height: 15px; stroke: currentColor; }
 .job-pill {
   display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-radius: var(--radius);
   font-size: 13px; color: var(--text-2); white-space: nowrap; background: var(--surface-3);

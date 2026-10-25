@@ -17,6 +17,7 @@ class Job:
         self.kind = kind
         self.label = label
         self.state = "running"  # running | done | error
+        self.project = None     # 작업이 속한 대회 폴더
         self.progress = 0.0
         self.message = "시작하는 중"
         self.result = None
@@ -33,6 +34,7 @@ class Job:
 
     def to_dict(self, with_result: bool = True) -> dict:
         d = {"id": self.id, "kind": self.kind, "label": self.label, "state": self.state,
+             "project": getattr(self, "project", None),
              "progress": self.progress, "message": self.message, "error": self.error,
              "elapsed": (self.finished or time.time()) - self.started}
         if with_result and self.state == "done":
@@ -46,16 +48,21 @@ class JobManager:
         self.jobs: dict[str, Job] = {}
         self.lock = threading.Lock()
 
-    def submit(self, kind: str, label: str, fn, *args, key: str | None = None, **kwargs) -> Job:
-        """같은 종류·같은 조건의 작업이 돌고 있으면 그걸 돌려주고, 조건이 다르면 끝날 때까지 기다리라고 알린다."""
+    def submit(self, kind: str, label: str, fn, *args, key: str | None = None, project: str | None = None,
+               **kwargs) -> Job:
+        """같은 대회에서 같은 종류·같은 조건의 작업이 돌고 있으면 그걸 돌려주고, 조건이 다르면 끝날 때까지 기다리라고 알린다.
+        project: 작업이 속한 대회 폴더 (생략하면 인자 중 대회 객체에서 찾는다)."""
+        if project is None:
+            project = next((str(a.root) for a in args if hasattr(a, "root") and hasattr(a, "settings")), None)
         with self.lock:
             for j in self.jobs.values():
-                if j.kind == kind and j.state == "running":
+                if j.kind == kind and j.state == "running" and j.project == project:
                     if j.key == key:
                         return j
                     raise LoadError(f"'{j.label}' 작업이 아직 진행 중입니다. 끝난 뒤 다시 해 주세요.")
             job = Job(kind, label)
             job.key = key
+            job.project = project
             self.jobs[job.id] = job
             self._trim()
 

@@ -92,6 +92,12 @@
   D.openProject = async function (path) {
     if (!path) return;
     const r = await D.api("/api/open", { body: { path } });
+    if (r.switched) {  // 이미 열린 대회: 그 탭으로
+      await D.refreshState();
+      const target = D.tabRoutes[r.root] || "#/overview";
+      if (location.hash === target) D.render(); else location.hash = target;
+      return;
+    }
     try {
       await D.runJob(r.job);
     } catch (e) {

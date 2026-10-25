@@ -17,6 +17,10 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import os  # noqa: E402
 os.environ["DOTBOGI_HOME"] = tempfile.mkdtemp(prefix="dotbogi_home_")  # 사용자 최근 목록을 건드리지 않게
+# 새 버전 확인: GitHub에 묻지 않도록 '확인 결과'를 미리 넣어 둔다 (최신 99.0.0 → 사이드바 알림이 떠야 함)
+import json as _json  # noqa: E402
+(Path(os.environ["DOTBOGI_HOME"]) / "update.json").write_text(_json.dumps({
+    "checked_at": time.time(), "latest": "99.0.0", "url": "https://github.com/maximuthking/dotbogi/releases/latest"}), encoding="utf-8")
 from conftest import make_groups, make_planted, make_time_group, write  # noqa: E402
 from dotbogi import server as S  # noqa: E402
 
@@ -84,6 +88,9 @@ with sync_playwright() as pw:
         pg.goto(BASE)
         settle(pg)
         shot(pg, "01_home_empty")
+        pg.wait_for_selector(".side-update", timeout=8000)
+        assert "99.0.0" in pg.inner_text(".side-update")
+        step("새 버전 알림 표시")
         pg.click("button:has-text('찾아보기')")
         settle(pg)
         pg.fill(".modal input.input", str(DATA))
@@ -238,6 +245,14 @@ with sync_playwright() as pw:
 
         # ── 시간·회귀 대회, 어두운 테마, 좁은 화면
         open_folder(pg, timeds)
+        tabs = pg.locator(".tabs-strip .tab")
+        assert tabs.count() >= 2, "대회 탭이 쌓이지 않았습니다"
+        tabs.nth(0).click()
+        settle(pg, 800)
+        assert pg.locator(".tab.active").inner_text() == tabs.nth(0).inner_text()
+        tabs.nth(tabs.count() - 1).click()
+        settle(pg, 800)
+        step(f"대회 탭 {tabs.count()}개 전환")
         pg.evaluate("localStorage.setItem('dotbogi-theme','dark')")
         nav(pg, "overview")
         pg.reload()

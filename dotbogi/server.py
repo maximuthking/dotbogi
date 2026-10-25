@@ -33,8 +33,12 @@ def _routes(app: App):
 
     return {
         ("GET", "/api/state"): lambda q, b: app.state(),
+        ("GET", "/api/update"): lambda q, b: app.check_update(q1(q, "force") == "1"),
+        ("POST", "/api/prefs"): lambda q, b: app.set_prefs(b),
         ("GET", "/api/browse"): lambda q, b: app.browse(q1(q, "path")),
         ("POST", "/api/open"): lambda q, b: app.open_project(b.get("path", "")),
+        ("POST", "/api/switch"): lambda q, b: app.switch_project(b.get("path", "")),
+        ("POST", "/api/close"): lambda q, b: app.close_project(b.get("path", "")),
         ("POST", "/api/recent/forget"): lambda q, b: app.forget_recent(b.get("path", "")),
         ("POST", "/api/files"): lambda q, b: app.set_files(b),
         ("POST", "/api/reload"): lambda q, b: app.reload(),
