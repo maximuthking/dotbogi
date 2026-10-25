@@ -39,7 +39,15 @@
 | 6 | 섞으면 정말 좋아지나, 과적합인가?<br>**앙상블** | OOF 힐클라이밍 가중치와 함께, 가중치를 다른 폴드로 검증한 **정직한 점수**를 보여 줍니다. |
 | 7 | 이 파일, 올려도 되나?<br>**제출 검사** | 컬럼·순서·행 수·ID(중복·누락·앞자리 0)·확률/라벨 혼동·인코딩을 검사하고, 의미를 바꾸지 않는 것만 고친 파일을 따로 만듭니다. |
 
-이 밖에 **컬럼**(모든 컬럼의 train/test 분포, 타깃 관계, 단일 피처 예측력), **탐색**(상관 행렬, 그래프 만들기, 원본 데이터 보기), **보고서**(분석 결과를 HTML 파일 하나로)가 있습니다.
+이 밖에 이런 화면과 기능이 있습니다.
+
+- **컬럼**: 모든 컬럼의 train/test 분포, 타깃 관계, 단일 피처 예측력.
+- **데이터 표**: 수백만 행도 스프레드시트처럼 스크롤로 봅니다. 정렬·검색·필터를 걸고, 실험의 OOF 예측과 오차를 옆에 붙여 모델이 가장 크게 틀린 행부터 볼 수 있습니다.
+- **탐색**: 상관 행렬, 그래프 만들기.
+- **보고서**: 분석 결과를 HTML 파일 하나로 저장합니다.
+- **다중 타깃 대회**: 타깃이 여러 개면 타깃마다 학습하고, CV·앙상블·LB 흔들림·제출 파일을 모든 타깃 기준으로 계산합니다(점수는 타깃별 평균).
+- **대회 여러 개를 탭으로**: 열어 둔 대회를 위쪽 탭으로 오가고, 탭마다 보던 화면을 기억합니다.
+- **한국어·영어 화면**: 사이드바 아래 버튼이나 설정에서 바꿉니다.
 
 ## 화면
 
@@ -60,6 +68,10 @@
     <td><img src="assets/submission.png" alt="제출 검사"><br><b>제출 검사</b> · 올리기 전에 형식 실수를 잡고, 안전하게 고친 파일을 따로</td>
     <td><img src="assets/home.png" alt="시작 화면"><br><b>시작</b> · 대회 폴더를 열고, 최근 연 대회로 바로 돌아가기</td>
   </tr>
+  <tr>
+    <td><img src="assets/sheet.png" alt="데이터 표"><br><b>데이터 표</b> · 실험의 예측·오차를 붙여 가장 크게 틀린 행부터</td>
+    <td><img src="assets/overview-en.png" alt="영어 화면"><br><b>English</b> · 화면 전체를 영어로도 볼 수 있습니다</td>
+  </tr>
 </table>
 
 <sub>스크린샷은 캐글 Titanic 데이터로 찍었습니다. 실험 세 개는 화면의 기본 모델과, 학습 스크립트에서 `dotbogi.log`로 기록한 두 모델입니다.</sub>
@@ -74,13 +86,13 @@
 | MLflow·W&B에는 리더보드 개념이 없어 시트에 손으로 적습니다. | CV와 Public·Private LB를 같은 표에서 다루고, 스크립트 한 줄로 기록합니다. |
 | 힐클라이밍 앙상블은 같은 OOF로 점수를 매겨 과적합을 숨깁니다. | 가중치를 다른 폴드로 검증한 점수를 같이 보여 줍니다. |
 | 제출 파일을 올리기 전에 검사해 주는 도구가 없습니다. | 제출 검사와 의미를 바꾸지 않는 자동 수정이 있습니다. |
-| 한국어 화면이 없고 한글 CSV가 깨집니다. | 한국어 화면, 한글 컬럼명, cp949 CSV를 그대로 엽니다. |
+| 한국어 화면이 없고 한글 CSV가 깨집니다. | 한국어·영어 화면, 한글 컬럼명과 cp949 CSV를 그대로 엽니다. |
 
 ## 설치
 
 ### 데스크톱 앱 (Windows)
 
-[릴리스 페이지](https://github.com/maximuthking/dotbogi/releases/latest)에서 `Dotbogi-Setup-1.0.0.exe`를 받아 실행하면 끝입니다. 파이썬이 필요 없고, 관리자 권한 없이 사용자 폴더에 설치되며, 시작 메뉴에 **돋보기**가 생깁니다.
+[릴리스 페이지](https://github.com/maximuthking/dotbogi/releases/latest)에서 `Dotbogi-Setup-버전.exe`를 받아 실행하면 끝입니다. 파이썬이 필요 없고, 관리자 권한 없이 사용자 폴더에 설치되며, 시작 메뉴에 **돋보기**가 생깁니다.
 제거는 Windows 설정의 '앱'에서 합니다. 대회 폴더의 `.dotbogi` 기록은 지우지 않습니다.
 
 - 자체 창으로 뜹니다. 노션 데스크톱 앱처럼 제목 표시줄 없이 위쪽 줄을 끌어 옮기고, 두 번 누르면 최대화합니다.
@@ -96,7 +108,7 @@
 
 ```bash
 pip install -e .[all] pyinstaller
-python packaging/build.py          # dist/Dotbogi/Dotbogi.exe 와 dist/Dotbogi-Setup-1.0.0.exe
+python packaging/build.py          # dist/Dotbogi/Dotbogi.exe 와 dist/Dotbogi-Setup-<버전>.exe
 ```
 
 빌드는 묶은 exe가 LightGBM·scikit-learn·parquet를 제대로 쓰는지 스스로 점검한 뒤에 설치 파일을 만듭니다 (`Dotbogi.exe --selftest`).
@@ -130,6 +142,8 @@ pywebview가 없으면 Edge/Chrome 앱 창이나 기본 브라우저 탭으로 �
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | 대회 폴더 열기 |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> ~ <kbd>0</kbd> | 왼쪽 메뉴 순서대로 화면 이동 |
 | <kbd>Ctrl</kbd>+<kbd>B</kbd> | 사이드바 닫기·열기 |
+| <kbd>Ctrl</kbd>+<kbd>Tab</kbd> | 다음 대회 탭 (<kbd>Shift</kbd>를 같이 누르면 이전 탭) |
+| <kbd>Ctrl</kbd>+<kbd>W</kbd> | 지금 대회 탭 닫기 (데스크톱 앱) |
 | <kbd>Esc</kbd> | 대화 상자 닫기 |
 
 ## 학습 스크립트와 함께 쓰기
@@ -190,7 +204,8 @@ dotbogi.report("/kaggle/input/대회이름", "/kaggle/working/report.html", adve
 - **Kaggle 제출 기록 가져오기**: 설정에 대회 주소를 적고, Kaggle 공식 CLI(`pip install kaggle`, API 토큰 설정)가 있으면 실험 화면의 버튼으로 제출별 Public/Private 점수를 가져옵니다. 돋보기에서 내려받은 제출 파일은 파일 이름에 실험 ID가 들어 있어 자동으로 짝이 맞춰집니다.
 - **대회 전용 평가식**: 설정에서 `score(y_true, y_pred)` 함수가 든 파이썬 파일을 등록하면 CV·앙상블·LB 흔들림 계산에 그 식을 씁니다. 데이콘의 복합 지표(예: AUC와 Brier 조합)를 그대로 옮길 수 있습니다.
 - **대회 정보**: 플랫폼, Public LB 비율, 하루 제출 한도, 최종 선택 수, 마감일(사이드바에 D-day), 규칙 메모.
-- **밝은·어두운 테마**: 사이드바 아래 버튼. 처음에는 시스템 설정을 따릅니다.
+- **밝은·어두운 테마, 한국어·영어**: 사이드바 아래 버튼. 처음에는 운영체제 설정을 따릅니다.
+- **새 버전 알림**: 새 릴리스가 나오면 사이드바 아래에 알려 줍니다. 설정의 '앱 설정'에서 끌 수 있습니다.
 
 </details>
 
@@ -231,7 +246,8 @@ dotbogi.report("/kaggle/input/대회이름", "/kaggle/working/report.html", adve
 ## 데이터와 보안
 
 - 서버는 `127.0.0.1`에만 열리고, 실행할 때마다 만드는 토큰이 없으면 API를 쓸 수 없습니다. 다른 웹사이트가 이 서버를 부를 수 없습니다.
-- 인터넷 연결이 필요 없습니다. 차트 라이브러리(Apache ECharts)도 함께 들어 있습니다.
+- 분석에는 인터넷 연결이 필요 없습니다. 차트 라이브러리(Apache ECharts)도 함께 들어 있습니다.
+- 새 버전 확인만 하루 한 번 GitHub에 최신 버전 번호를 묻습니다. 데이터나 사용 기록은 보내지 않고, 설정에서 끌 수 있습니다.
 - Kaggle 기록 가져오기만 Kaggle 공식 CLI를 실행합니다. 인증 정보는 돋보기가 읽거나 저장하지 않습니다.
 
 ## 개발
@@ -241,7 +257,11 @@ pip install -e .[all,dev]
 pytest                                   # 단위·통합 테스트
 pip install playwright                   # 화면 자동 점검 (설치된 Edge 사용)
 python tests/ui_tour.py 캡처폴더 msedge   # 모든 화면·창을 눌러 보고 캡처, 콘솔 오류가 있으면 실패
+python tools/i18n.py extract             # 화면 문구를 바꿨으면: 번역 사전에 새 문구 추가
+python tools/i18n.py check               # 영어 번역이 빠진 문구가 있으면 실패 (pytest에도 포함)
 ```
+
+화면 문구는 한국어 원문을 `T("...")`로 감싸고, 영어 번역은 `dotbogi/i18n_en.json`에 둡니다. 서버가 보내는 문구는 응답 직전에 같은 사전으로 번역합니다(`dotbogi/i18n.py`).
 
 | 위치 | 내용 |
 |---|---|
@@ -250,6 +270,7 @@ python tests/ui_tour.py 캡처폴더 msedge   # 모든 화면·창을 눌러 보
 | `dotbogi/server.py` | 표준 라이브러리 HTTP 서버 (127.0.0.1 + 토큰) |
 | `dotbogi/desktop.py` | 데스크톱 창 (pywebview), 분석 엔진 프로세스 |
 | `dotbogi/static/` | 빌드 없는 화면 (바닐라 JS + ECharts) |
+| `dotbogi/i18n.py`, `i18n_en.json` | 영어 화면 번역 |
 | `packaging/` | exe와 설치 프로그램 빌드 |
 
 ## 라이선스

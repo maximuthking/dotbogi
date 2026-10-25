@@ -18,6 +18,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import i18n
 from .api import App
 from .io import LoadError
 from .utils import jsonable
@@ -114,6 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         self._handle("POST")
 
     def _handle(self, method: str):
+        i18n.set_lang(self.headers.get("X-Dotbogi-Lang"))
         if not self._host_ok():
             return self._send(HTTPStatus.FORBIDDEN, b"forbidden", "text/plain")
         url = urllib.parse.urlsplit(self.path)
@@ -187,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(HTTPStatus.OK, f.read_bytes(), ctype, cache="vendor/" in rel)
 
     def _json(self, status, obj):
+        if i18n.current() == "en":
+            obj = i18n.translate(obj, "en")
         data = json.dumps(obj, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self._send(status, data, "application/json; charset=utf-8", cache=False)
 

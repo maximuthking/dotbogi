@@ -376,9 +376,9 @@ def _check_drift(feats, profiles):
                          action="'train vs test' 화면에서 분포를 비교하고, 적대적 검증으로 영향이 큰지 확인하세요."))
     if unseen:
         unseen.sort(key=lambda t: -t[1])
+        listed = ", ".join(f"{n} (test 행의 {r:.1%}, 새 범주 {k:,}개)" for n, r, k in unseen[:6])
         out.append(_item("unseen", "warn", f"test에 train에 없던 범주가 나오는 컬럼이 {len(unseen)}개 있습니다",
-                         ", ".join(f"{n} (test 행의 {r:.1%}, 새 범주 {k:,}개)" for n, r, k in unseen[:6]) +
-                         ". 모델은 처음 보는 범주를 결측처럼 다룹니다.",
+                         f"{listed}. 모델은 처음 보는 범주를 결측처럼 다룹니다.",
                          columns=[n for n, _, _ in unseen],
                          action="드문 범주를 '기타'로 묶거나 빈도 인코딩을 써 보세요."))
     return out

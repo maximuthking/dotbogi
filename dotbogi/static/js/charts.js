@@ -2,6 +2,7 @@
 (function () {
   "use strict";
   const D = window.D;
+  const T = D.t;
   const instances = [];
   const f = D.fmt;
 
@@ -42,7 +43,7 @@
   }
 
   function make(el, option) {
-    if (!window.echarts) { el.textContent = "차트 라이브러리를 불러오지 못했습니다."; return null; }
+    if (!window.echarts) { el.textContent = T("차트 라이브러리를 불러오지 못했습니다."); return null; }
     const chart = window.echarts.init(el, null, { renderer: "canvas" });
     chart.setOption(option);
     const ro = new ResizeObserver(() => { if (!chart.isDisposed()) chart.resize(); });
@@ -88,7 +89,7 @@
   /* train vs test 분포 (히스토그램 또는 범주 막대). 값은 비율 */
   C.dist = function (el, dist, opts = {}) {
     const p = palette();
-    if (!dist) { el.appendChild(D.empty("분포를 그릴 값이 없습니다", null)); return; }
+    if (!dist) { el.appendChild(D.empty(T("분포를 그릴 값이 없습니다"), null)); return; }
     const o = base(p);
     const series = [];
     let cats;
@@ -121,11 +122,11 @@
   /* 타깃과의 관계: 구간/범주별 양성 비율·평균 (막대=행 수, 선=타깃) */
   C.target = function (el, tg, opts = {}) {
     const p = palette();
-    if (!tg || !tg.groups || !tg.groups.length) { el.appendChild(D.empty("타깃 관계를 그릴 수 없습니다", null)); return; }
+    if (!tg || !tg.groups || !tg.groups.length) { el.appendChild(D.empty(T("타깃 관계를 그릴 수 없습니다"), null)); return; }
     const o = base(p);
     const labels = tg.groups.map((g) => {
       if (g.label_type === "range") return rangeLabel(g.label[0], g.label[1], tg.datetime);
-      if (g.label_type === "missing") return "(결측)";
+      if (g.label_type === "missing") return T("(결측)");
       return String(g.label);
     });
     // 축에는 구간 시작값만, 전체 구간은 툴팁에
@@ -146,27 +147,27 @@
       }));
       o.legend = { top: 0, textStyle: { color: p.muted, fontSize: 11 }, itemWidth: 10, itemHeight: 10, type: "scroll" };
       o.grid.top = 34;
-      o.tooltip.formatter = (ps) => `<b>${D.esc(labels[ps[0].dataIndex])}</b> (${f.int(tg.groups[ps[0].dataIndex].count)}행)<br>` +
+      o.tooltip.formatter = (ps) => T("<b>{0}</b> ({1}행)<br>", D.esc(labels[ps[0].dataIndex]), f.int(tg.groups[ps[0].dataIndex].count)) +
         ps.map((s) => `${s.marker}${D.esc(s.seriesName)} ${f.pct(s.value, 1)}`).join("<br>");
       return make(el, o);
     }
     const isBin = tg.task === "binary";
     const vals = tg.groups.map((g) => g.mean);
     o.yAxis = [
-      axis(p, { type: "value", name: isBin ? "양성 비율" : "타깃 평균", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => (isBin ? f.pct(v, 0) : f.num(v, 3)) } }),
-      axis(p, { type: "value", name: "행 수", splitLine: { show: false }, axisLabel: { color: p.faint, fontSize: 10, formatter: (v) => f.num(v, 2) } }),
+      axis(p, { type: "value", name: isBin ? T("양성 비율") : T("타깃 평균"), axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => (isBin ? f.pct(v, 0) : f.num(v, 3)) } }),
+      axis(p, { type: "value", name: T("행 수"), splitLine: { show: false }, axisLabel: { color: p.faint, fontSize: 10, formatter: (v) => f.num(v, 2) } }),
     ];
     o.series = [
-      { name: "행 수", type: "bar", yAxisIndex: 1, data: tg.groups.map((g) => g.count), itemStyle: { color: p.surface3 }, barMaxWidth: 34, z: 1 },
-      { name: isBin ? "양성 비율" : "타깃 평균", type: "line", data: vals, symbolSize: 8, z: 3, itemStyle: { color: p.primary },
+      { name: T("행 수"), type: "bar", yAxisIndex: 1, data: tg.groups.map((g) => g.count), itemStyle: { color: p.surface3 }, barMaxWidth: 34, z: 1 },
+      { name: isBin ? T("양성 비율") : T("타깃 평균"), type: "line", data: vals, symbolSize: 8, z: 3, itemStyle: { color: p.primary },
         lineStyle: { width: tg.groups.every((g) => g.label_type !== "range") ? 0 : 2.4, color: p.primary },
         markLine: tg.overall !== null && tg.overall !== undefined ? { silent: true, symbol: "none", lineStyle: { color: p.muted, type: "dashed" },
-          label: { formatter: "전체 " + (isBin ? f.pct(tg.overall, 1) : f.num(tg.overall, 4)), color: p.muted, fontSize: 11, position: "insideEndTop" },
+          label: { formatter: T("전체 ") + (isBin ? f.pct(tg.overall, 1) : f.num(tg.overall, 4)), color: p.muted, fontSize: 11, position: "insideEndTop" },
           data: [{ yAxis: tg.overall }] } : undefined },
     ];
     o.tooltip.formatter = (ps) => {
       const i = ps[0].dataIndex; const g = tg.groups[i];
-      return `<b>${D.esc(labels[i])}</b><br>행 수 ${f.int(g.count)}<br>` + (isBin ? `양성 비율 ${f.pct(g.mean, 1)}` : `평균 ${f.num(g.mean, 4)} (표준편차 ${f.num(g.std, 3)})`);
+      return T("<b>{0}</b><br>행 수 {1}<br>", D.esc(labels[i]), f.int(g.count)) + (isBin ? T("양성 비율 {0}", f.pct(g.mean, 1)) : T("평균 {0} (표준편차 {1})", f.num(g.mean, 4), f.num(g.std, 3)));
     };
     return make(el, o);
   };
@@ -180,14 +181,14 @@
     o.yAxis = axis(p, { type: "category", data: data.map((d) => d.name), axisLabel: { color: p.text2, fontSize: 11.5, width: (opts.left || 150) - 12, overflow: "truncate" } });
     o.xAxis = axis(p, { type: "value", max: opts.max, min: opts.min, axisLabel: { color: p.muted, fontSize: 11, formatter: opts.axisFmt || ((v) => f.num(v, 3)) } });
     o.tooltip.trigger = "item";
-    o.tooltip.formatter = (s) => `<b>${D.esc(s.name)}</b><br>${opts.valueLabel || "값"} ${opts.fmt ? opts.fmt(s.value) : f.num(s.value, 4)}` + (data[s.dataIndex].sub ? `<br>${D.esc(data[s.dataIndex].sub)}` : "");
+    o.tooltip.formatter = (s) => `<b>${D.esc(s.name)}</b><br>${opts.valueLabel || T("값")} ${opts.fmt ? opts.fmt(s.value) : f.num(s.value, 4)}` + (data[s.dataIndex].sub ? `<br>${D.esc(data[s.dataIndex].sub)}` : "");
     o.series = [{ type: "bar", data: data.map((d) => ({ value: d.value, itemStyle: { color: d.color || opts.color || p.primary, borderRadius: [0, 3, 3, 0] } })),
       barMaxWidth: 16, label: { show: true, position: "right", color: p.muted, fontSize: 11, formatter: (s) => (opts.fmt ? opts.fmt(s.value) : f.num(s.value, 3)) },
       markLine: opts.mark !== undefined ? { silent: true, symbol: "none", lineStyle: { color: p.danger, type: "dashed" }, label: { formatter: opts.markLabel || "", color: p.danger, fontSize: 11, position: "end", distance: 4 }, data: [{ xAxis: opts.mark }] } : undefined }];
     // 최소값보다 작은 막대(예: 우연보다 낮은 AUC)는 축 시작점에 붙이고, 글자는 원래 값으로
     o.series[0].data.forEach((d) => { d.raw = d.value; if (opts.min !== undefined && d.value < opts.min) d.value = opts.min; });
     o.series[0].label.formatter = (s) => (opts.fmt ? opts.fmt(s.data.raw) : f.num(s.data.raw, 3));
-    o.tooltip.formatter = (s) => `<b>${D.esc(s.name)}</b><br>${opts.valueLabel || "값"} ${opts.fmt ? opts.fmt(s.data.raw) : f.num(s.data.raw, 4)}` + (data[s.dataIndex].sub ? `<br>${D.esc(data[s.dataIndex].sub)}` : "");
+    o.tooltip.formatter = (s) => `<b>${D.esc(s.name)}</b><br>${opts.valueLabel || T("값")} ${opts.fmt ? opts.fmt(s.data.raw) : f.num(s.data.raw, 4)}` + (data[s.dataIndex].sub ? `<br>${D.esc(data[s.dataIndex].sub)}` : "");
     el.style.height = Math.max(160, Math.min(900, data.length * 22 + 40)) + "px";
     return make(el, o);
   };
@@ -223,7 +224,7 @@
     o.yAxis = axis(p, { type: "value", name: r.y, nameLocation: "middle", nameGap: 46, scale: true, axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => (r.y_date ? f.day(v) : f.num(v, 3)) } });
     const fmtV = (v, d) => (d ? f.day(v) : f.num(v, 5));
     o.tooltip.trigger = "item";
-    o.tooltip.formatter = (s) => `${D.esc(r.x)}: ${fmtV(s.value[0], r.x_date)}<br>${D.esc(r.y)}: ${fmtV(s.value[1], r.y_date)}` + (s.seriesName && s.seriesName !== "점" ? `<br>${D.esc(r.color)}: ${D.esc(s.seriesName)}` : "");
+    o.tooltip.formatter = (s) => `${D.esc(r.x)}: ${fmtV(s.value[0], r.x_date)}<br>${D.esc(r.y)}: ${fmtV(s.value[1], r.y_date)}` + (s.seriesName && s.seriesName !== T("점") ? `<br>${D.esc(r.color)}: ${D.esc(s.seriesName)}` : "");
     if (r.groups) {
       const by = new Map();
       r.points.forEach((pt, i) => { const g = r.groups[i]; if (!by.has(g)) by.set(g, []); by.get(g).push(pt); });
@@ -231,7 +232,7 @@
       o.series = keys.map((k, i) => ({ name: k, type: "scatter", data: by.get(k), symbolSize: 5, itemStyle: { color: p.series[i % p.series.length], opacity: 0.6 }, large: by.get(k).length > 2000 }));
       o.legend = { top: 0, textStyle: { color: p.muted, fontSize: 11 }, type: "scroll" };
     } else {
-      o.series = [{ name: "점", type: "scatter", data: r.points, symbolSize: 5, itemStyle: { color: p.primary, opacity: 0.5 }, large: r.points.length > 2000 }];
+      o.series = [{ name: T("점"), type: "scatter", data: r.points, symbolSize: 5, itemStyle: { color: p.primary, opacity: 0.5 }, large: r.points.length > 2000 }];
     }
     return make(el, o);
   };
@@ -245,7 +246,7 @@
     o.yAxis = axis(p, { type: "value", name: r.y, scale: true, axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => (r.y_date ? f.day(v) : f.num(v, 3)) } });
     o.tooltip.trigger = "item";
     o.tooltip.formatter = (s) => { const b = r.boxes[s.dataIndex]; const v = b.stats.map((x) => (r.y_date ? f.day(x) : f.num(x, 4)));
-      return `<b>${D.esc(b.label)}</b> (${f.int(b.n)}행)<br>위 수염 ${v[4]}<br>3사분위 ${v[3]}<br>중앙값 ${v[2]}<br>1사분위 ${v[1]}<br>아래 수염 ${v[0]}`; };
+      return T("<b>{0}</b> ({1}행)<br>위 수염 {2}<br>3사분위 {3}<br>중앙값 {4}<br>1사분위 {5}<br>아래 수염 {6}", D.esc(b.label), f.int(b.n), v[4], v[3], v[2], v[1], v[0]); };
     o.series = [{ type: "boxplot", data: r.boxes.map((b) => b.stats), itemStyle: { color: p.train + "33", borderColor: p.train } }];
     return make(el, o);
   };
@@ -258,7 +259,7 @@
     const cats = isHist ? binLabels(r.edges, r.x_date) : r.categories;
     o.grid = { left: 60, right: 20, top: r.series.length > 1 ? 34 : 18, bottom: isHist ? 40 : 70 };
     o.xAxis = axis(p, { type: "category", data: cats, axisLabel: { color: p.muted, fontSize: 11, rotate: !isHist && cats.length > 8 ? 30 : 0, hideOverlap: true, formatter: (v) => (v.length > 14 ? v.slice(0, 13) + "…" : v) } });
-    o.yAxis = axis(p, { type: "value", name: "행 수", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } });
+    o.yAxis = axis(p, { type: "value", name: T("행 수"), axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } });
     o.tooltip.trigger = "axis";
     o.series = r.series.map((s, i) => ({ name: s.name, type: "bar", stack: r.series.length > 1 ? "s" : undefined, data: s.counts,
       barCategoryGap: isHist ? "4%" : "20%", itemStyle: { color: r.series.length > 1 ? p.series[i % p.series.length] : p.primary } }));
@@ -275,7 +276,7 @@
     o.grid = { left: 120, right: 70, top: 10, bottom: 80 };
     o.xAxis = axis(p, { type: "category", data: r.xs, name: r.x, nameLocation: "middle", nameGap: 56, axisLabel: { color: p.text2, fontSize: 11, rotate: 30 } });
     o.yAxis = axis(p, { type: "category", data: r.ys, name: r.y, axisLabel: { color: p.text2, fontSize: 11 } });
-    o.tooltip.formatter = (s) => D.esc(r.x) + ": " + D.esc(r.xs[s.value[0]]) + "<br>" + D.esc(r.y) + ": " + D.esc(r.ys[s.value[1]]) + "<br><b>" + f.int(s.value[2]) + "행</b>";
+    o.tooltip.formatter = (s) => D.esc(r.x) + ": " + D.esc(r.xs[s.value[0]]) + "<br>" + D.esc(r.y) + ": " + D.esc(r.ys[s.value[1]]) + "<br><b>" + f.int(s.value[2]) + T("행</b>");
     o.visualMap = { min: 0, max, right: 6, top: "middle", itemHeight: 140, inRange: { color: ["#f1f4f9", "#2f6fdf"] }, textStyle: { color: p.muted } };
     o.series = [{ type: "heatmap", data, label: { show: r.xs.length * r.ys.length <= 120, fontSize: 10, color: "#111", formatter: (s) => f.int(s.value[2]) } }];
     return make(el, o);
@@ -327,7 +328,7 @@
       o.xAxis = axis(p, { type: "category", data: cls.map((c) => c.value), axisLabel: { color: p.muted, fontSize: 11, rotate: cls.length > 8 ? 30 : 0 } });
       o.yAxis = axis(p, { type: "value", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } });
       o.tooltip.trigger = "axis";
-      o.tooltip.formatter = (ps) => { const c = cls[ps[0].dataIndex]; return `<b>${D.esc(c.value)}</b><br>${f.int(c.count)}행 (${f.pct(c.rate, 1)})`; };
+      o.tooltip.formatter = (ps) => { const c = cls[ps[0].dataIndex]; return T("<b>{0}</b><br>{1}행 ({2})", D.esc(c.value), f.int(c.count), f.pct(c.rate, 1)); };
       o.series = [{ type: "bar", data: cls.map((c) => c.count), barMaxWidth: 46, itemStyle: { color: p.primary, borderRadius: [4, 4, 0, 0] },
         label: { show: cls.length <= 12, position: "top", color: p.muted, fontSize: 11, formatter: (s) => f.pct(cls[s.dataIndex].rate, 1) } }];
       if (cls.length > 8) o.grid.bottom = 70;
@@ -336,10 +337,10 @@
     const hst = log && t.log_hist ? t.log_hist : t.hist;
     if (!hst) return null;
     const cats = binLabels(hst.edges, false);
-    o.xAxis = axis(p, { type: "category", data: cats, name: log ? "log1p(타깃)" : "", axisLabel: { color: p.muted, fontSize: 11, hideOverlap: true } });
+    o.xAxis = axis(p, { type: "category", data: cats, name: log ? T("log1p(타깃)") : "", axisLabel: { color: p.muted, fontSize: 11, hideOverlap: true } });
     o.yAxis = axis(p, { type: "value", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } });
     o.tooltip.trigger = "axis";
-    o.tooltip.formatter = (ps) => { const i = ps[0].dataIndex; return `<b>${rangeLabel(hst.edges[i], hst.edges[i + 1])}</b><br>${f.int(ps[0].value)}행`; };
+    o.tooltip.formatter = (ps) => { const i = ps[0].dataIndex; return T("<b>{0}</b><br>{1}행", rangeLabel(hst.edges[i], hst.edges[i + 1]), f.int(ps[0].value)); };
     o.series = [{ type: "bar", data: hst.counts, barCategoryGap: "4%", itemStyle: { color: p.primary } }];
     return make(el, o);
   };
@@ -350,11 +351,11 @@
     const o = base(p);
     const vis = rows.filter((r) => r.fold >= 0);
     o.grid = { left: 60, right: 54, top: 26, bottom: 34 };
-    o.xAxis = axis(p, { type: "category", data: vis.map((r) => "폴드 " + r.fold) });
-    o.yAxis = [axis(p, { type: "value", name: "행 수", axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } }),
+    o.xAxis = axis(p, { type: "category", data: vis.map((r) => T("폴드 ") + r.fold) });
+    o.yAxis = [axis(p, { type: "value", name: T("행 수"), axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => f.num(v, 3) } }),
       axis(p, { type: "value", name: label || "", splitLine: { show: false }, scale: !isRate, min: isRate ? 0 : undefined, max: isRate ? 1 : undefined, axisLabel: { color: p.muted, fontSize: 11, formatter: fmtFn || ((v) => f.num(v, 3)) } })];
     o.tooltip.trigger = "axis";
-    o.series = [{ name: "행 수", type: "bar", data: vis.map((r) => r.rows), barMaxWidth: 40, itemStyle: { color: p.surface3 } }];
+    o.series = [{ name: T("행 수"), type: "bar", data: vis.map((r) => r.rows), barMaxWidth: 40, itemStyle: { color: p.surface3 } }];
     if (key) o.series.push({ name: label, type: "line", yAxisIndex: 1, data: vis.map((r) => r[key]), symbolSize: 7, itemStyle: { color: p.primary }, lineStyle: { color: p.primary } });
     return make(el, o);
   };

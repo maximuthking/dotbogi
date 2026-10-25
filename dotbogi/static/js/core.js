@@ -3,6 +3,22 @@
 (function () {
   "use strict";
   const D = (window.D = window.D || {});
+
+  /* 화면 언어: 저장한 값 → 없으면 운영체제·브라우저 언어 (한국어가 아니면 영어). 보고서 파일은 만들 때의 언어. */
+  D.lang = (function () {
+    if (window.__DOTBOGI_STATIC__ && window.__DOTBOGI_STATIC__.lang) return window.__DOTBOGI_STATIC__.lang;
+    try { const v = localStorage.getItem("dotbogi-lang"); if (v === "ko" || v === "en") return v; } catch (e) { /* 무시 */ }
+    return String(navigator.language || "ko").toLowerCase().startsWith("ko") ? "ko" : "en";
+  })();
+  document.documentElement.lang = D.lang;
+  /* 번역: 한국어 원문이 열쇠. {0} {1}…은 값 자리 */
+  D.t = function (ko, ...args) {
+    let s = ko;
+    if (D.lang === "en") { const en = (window.DOTBOGI_I18N_EN || {})[ko]; if (en) s = en; }
+    if (s.indexOf("{") < 0) return s;
+    return s.replace(/\{\{|\}\}|\{(\d+)\}/g, (m, k) => (m === "{{" ? "{" : m === "}}" ? "}" : String(args[Number(k)] ?? "")));
+  };
+  const T = D.t;
   D.pages = D.pages || {};
   D.STATIC = window.__DOTBOGI_STATIC__ || null;
 
@@ -106,8 +122,13 @@
       if (x === 0) return "0";
       const a = Math.abs(x);
       if (a < 1e-4) return (x < 0 ? ">-" : "<") + "0.0001";
-      if (a >= 1e8) return (x / 1e8).toFixed(a >= 1e10 ? 0 : 1).replace(/\.0$/, "") + "억";
-      if (a >= 1e6) return (x / 1e4).toFixed(0) + "만";
+      if (D.lang === "en") {  // 영어: K·M·B
+        if (a >= 1e9) return (x / 1e9).toFixed(a >= 1e11 ? 0 : 1).replace(/\.0$/, "") + "B";
+        if (a >= 1e6) return (x / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace(/\.0$/, "") + "M";
+      } else {
+        if (a >= 1e8) return (x / 1e8).toFixed(a >= 1e10 ? 0 : 1).replace(/\.0$/, "") + "억";
+        if (a >= 1e6) return (x / 1e4).toFixed(0) + "만";
+      }
       if (Number.isInteger(x) && a < 1e6) return nf.format(x);
       const s = Number(x.toPrecision(sig));
       return a >= 1000 ? nf.format(s) : String(s);
@@ -132,15 +153,15 @@
       const dt = new Date(Math.round(d * 86400000));
       return dt.toISOString().slice(0, 10);
     },
-    sec(s) { if (s === null || s === undefined) return "–"; return s < 1 ? "1초 미만" : s < 60 ? Math.round(s) + "초" : Math.floor(s / 60) + "분 " + Math.round(s % 60) + "초"; },
+    sec(s) { if (s === null || s === undefined) return "–"; return s < 1 ? T("1초 미만") : s < 60 ? Math.round(s) + T("초") : Math.floor(s / 60) + T("분 ") + Math.round(s % 60) + T("초"); },
     when(iso) { if (!iso) return "–"; return iso.replace("T", " ").slice(0, 16); },
   };
 
-  D.KIND_LABEL = { numeric: "숫자", categorical: "범주", binary: "이진", datetime: "날짜", text: "문장", id: "ID", constant: "상수" };
-  D.TASK_LABEL = { binary: "이진분류", multiclass: "다중분류", regression: "회귀" };
-  D.LEVEL_LABEL = { danger: "위험", warn: "주의", info: "참고", ok: "괜찮음" };
+  D.KIND_LABEL = { numeric: T("숫자"), categorical: T("범주"), binary: T("이진"), datetime: T("날짜"), text: T("문장"), id: "ID", constant: T("상수") };
+  D.TASK_LABEL = { binary: T("이진분류"), multiclass: T("다중분류"), regression: T("회귀") };
+  D.LEVEL_LABEL = { danger: T("위험"), warn: T("주의"), info: T("참고"), ok: T("괜찮음") };
   D.LEVEL_ICON = { danger: "stop", warn: "alert", info: "info", ok: "check" };
-  D.DRIFT_LABEL = { stable: "안정", watch: "조금 다름", shift: "많이 다름", unknown: "–" };
+  D.DRIFT_LABEL = { stable: T("안정"), watch: T("조금 다름"), shift: T("많이 다름"), unknown: "–" };
   D.DRIFT_CLASS = { stable: "ok", watch: "warn", shift: "danger", unknown: "" };
   D.kindBadge = (k) => h("span", { class: "badge kind " + k }, D.KIND_LABEL[k] || k);
   D.levelBadge = (lv) => h("span", { class: "badge " + lv }, D.LEVEL_LABEL[lv] || lv);
@@ -165,18 +186,18 @@
     try {
       res = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json", "X-Dotbogi-Token": TOKEN },
+        headers: { "Content-Type": "application/json", "X-Dotbogi-Token": TOKEN, "X-Dotbogi-Lang": D.lang },
         body: method === "POST" ? JSON.stringify(opts.body || {}) : undefined,
       });
     } catch (e) {
       showOffline();
-      throw new Error("돋보기 서버에 연결할 수 없습니다.");
+      throw new Error(T("돋보기 서버에 연결할 수 없습니다."));
     }
     hideOffline();
     let data;
-    try { data = await res.json(); } catch (e) { throw new Error("서버 응답을 읽지 못했습니다 (" + res.status + ")."); }
+    try { data = await res.json(); } catch (e) { throw new Error(T("서버 응답을 읽지 못했습니다 (") + res.status + ")."); }
     if (!res.ok) {
-      const err = new Error(data.error || "오류가 났습니다.");
+      const err = new Error(data.error || T("오류가 났습니다."));
       err.detail = data.detail;
       throw err;
     }
@@ -195,19 +216,19 @@
   function staticApi(url, method) {
     const store = D.STATIC.responses || {};
     if (method !== "GET") {
-      return Promise.reject(new Error("보고서 파일에서는 이 기능을 쓸 수 없습니다. 돋보기 프로그램에서 열어 주세요."));
+      return Promise.reject(new Error(T("보고서 파일에서는 이 기능을 쓸 수 없습니다. 돋보기 프로그램에서 열어 주세요.")));
     }
     const key = staticKey(url);
     if (key in store) return Promise.resolve(JSON.parse(JSON.stringify(store[key])));
-    return Promise.reject(new Error("이 보고서에는 해당 내용이 들어 있지 않습니다."));
+    return Promise.reject(new Error(T("이 보고서에는 해당 내용이 들어 있지 않습니다.")));
   }
 
   function showOffline() {
     if (offlineShown) return;
     offlineShown = true;
     const bar = h("div", { class: "offline", id: "offline" },
-      D.icon("alert"), "서버와 연결이 끊겼습니다. 터미널에서 돋보기를 다시 실행한 뒤 새로고침하세요.",
-      h("button", { class: "btn", onclick: () => location.reload() }, "새로고침"));
+      D.icon("alert"), T("서버와 연결이 끊겼습니다. 터미널에서 돋보기를 다시 실행한 뒤 새로고침하세요."),
+      h("button", { class: "btn", onclick: () => location.reload() }, T("새로고침")));
     document.body.appendChild(bar);
   }
   function hideOffline() {
@@ -243,7 +264,7 @@
         renderJobs();
         if (j.state === "done") entry.waiters.forEach((w) => w.resolve(j.result));
         else {
-          const err = new Error(j.error || "작업이 실패했습니다.");
+          const err = new Error(j.error || T("작업이 실패했습니다."));
           entry.waiters.forEach((w) => w.reject(err));
         }
       };
@@ -257,7 +278,7 @@
       if (r.ready === false && r.job) { await D.runJob(r.job); continue; }
       return r;
     }
-    throw new Error("결과를 준비하지 못했습니다. 새로고침해 보세요.");
+    throw new Error(T("결과를 준비하지 못했습니다. 새로고침해 보세요."));
   };
 
   function renderJobs() {
@@ -271,11 +292,11 @@
     const cur = D.project();
     const other = job.project && cur && job.project !== cur.root && D.state && (D.state.tabs || []).find((t) => t.root === job.project);
     slot.appendChild(h("span", { class: "job-pill", title: (job.label || "") + " · " + (job.message || "") },
-      h("span", { class: "spinner sm" }), other ? h("span", { class: "job-proj" }, other.name) : null, h("b", null, job.label || "작업 중"),
+      h("span", { class: "spinner sm" }), other ? h("span", { class: "job-proj" }, other.name) : null, h("b", null, job.label || T("작업 중")),
       h("span", { class: "job-msg" }, job.message || ""),
       h("span", { class: "job-bar" }, h("span", { style: { width: Math.max(3, pct) + "%" } })),
       h("span", { class: "num" }, pct + "%"),
-      jobs.length > 1 ? h("span", { class: "faint" }, ` 외 ${jobs.length - 1}개`) : null));
+      jobs.length > 1 ? h("span", { class: "faint" }, T(" 외 {0}개", jobs.length - 1)) : null));
   }
 
   // ───────────────────────────── 토스트·모달
@@ -298,7 +319,7 @@
     const back = h("div", { class: "modal-back", onmousedown: (e) => { if (e.target === back) close(); } },
       h("div", { class: "modal" + (wide ? " wide" : ""), role: "dialog", "aria-modal": "true" },
         h("div", { class: "modal-h" }, h("h3", null, title), h("span", { class: "grow" }),
-          h("button", { class: "icon-btn", title: "닫기", onclick: close }, D.icon("x"))),
+          h("button", { class: "icon-btn", title: T("닫기"), onclick: close }, D.icon("x"))),
         h("div", { class: "modal-b" }, body),
         footer ? h("div", { class: "modal-f" }, footer) : null));
     document.body.appendChild(back);
@@ -307,13 +328,13 @@
     if (first) setTimeout(() => first.focus(), 30);
     return { close, el: back };
   };
-  D.confirm = function (title, text, okLabel = "확인", danger = false) {
+  D.confirm = function (title, text, okLabel = T("확인"), danger = false) {
     return new Promise((resolve) => {
       let m, settled = false;
       const done = (v) => { if (settled) return; settled = true; resolve(v); m.close(); };
       m = D.modal({
         title, body: h("p", { style: { margin: "4px 0 8px" } }, text),
-        footer: [h("button", { class: "btn", onclick: () => done(false) }, "취소"),
+        footer: [h("button", { class: "btn", onclick: () => done(false) }, T("취소")),
           h("button", { class: "btn " + (danger ? "danger" : "primary"), onclick: () => done(true) }, okLabel)],
         onClose: () => { if (!settled) { settled = true; resolve(false); } },
       });
@@ -335,19 +356,19 @@
       const ta = h("textarea", { style: { position: "fixed", left: "-9999px" } }, text);
       document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
     }
-    D.toast("복사했습니다.");
-    if (btn) { const old = btn.textContent; btn.textContent = "복사됨"; setTimeout(() => (btn.textContent = old), 1200); }
+    D.toast(T("복사했습니다."));
+    if (btn) { const old = btn.textContent; btn.textContent = T("복사됨"); setTimeout(() => (btn.textContent = old), 1200); }
   };
   D.codeBlock = (text) => h("div", { class: "code" }, text,
-    h("div", { class: "copy" }, h("button", { class: "btn sm", onclick: (e) => D.copy(text, e.currentTarget) }, "복사")));
+    h("div", { class: "copy" }, h("button", { class: "btn sm", onclick: (e) => D.copy(text, e.currentTarget) }, T("복사"))));
 
   // 공통 상태 표시
-  D.loading = (msg = "불러오는 중") => h("div", { class: "loading" }, h("span", { class: "spinner" }), msg);
+  D.loading = (msg = T("불러오는 중")) => h("div", { class: "loading" }, h("span", { class: "spinner" }), msg);
   D.empty = (title, text, icon = "info", action) => h("div", { class: "empty" }, D.icon(icon), h("div", { class: "big" }, title),
     text ? h("div", null, text) : null, action ? h("div", { class: "mt12" }, action) : null);
   D.errorBox = (e, retry) => h("div", { class: "errbox" }, h("div", { class: "callout danger" }, D.icon("stop"),
-    h("div", { class: "grow" }, h("div", { class: "bold" }, "불러오지 못했습니다"), h("div", null, e.message || String(e)),
-      retry ? h("button", { class: "btn sm mt8", onclick: retry }, "다시 시도") : null)));
+    h("div", { class: "grow" }, h("div", { class: "bold" }, T("불러오지 못했습니다")), h("div", null, e.message || String(e)),
+      retry ? h("button", { class: "btn sm mt8", onclick: retry }, T("다시 시도")) : null)));
   D.callout = (kind, ...kids) => h("div", { class: "callout " + kind }, D.icon(D.LEVEL_ICON[kind] || "info"), h("div", { class: "grow" }, kids));
   D.card = (title, opts, ...body) => {
     opts = opts || {};
@@ -428,9 +449,9 @@
   };
 
   /* 칸을 눌러 바로 고치기 */
-  D.editable = function (value, display, onSave, { type = "text", placeholder = "입력" } = {}) {
+  D.editable = function (value, display, onSave, { type = "text", placeholder = T("입력") } = {}) {
     if (D.STATIC) return h("span", null, display !== undefined && display !== null && display !== "" ? display : h("span", { class: "faint" }, "–"));
-    const span = h("span", { class: "editable", title: "눌러서 고치기", role: "button", tabindex: "0", "aria-label": (placeholder || "값") + " 고치기" },
+    const span = h("span", { class: "editable", title: T("눌러서 고치기"), role: "button", tabindex: "0", "aria-label": (placeholder || T("값")) + T(" 고치기") },
       display !== undefined && display !== null && display !== "" ? display : h("span", { class: "faint" }, placeholder));
     span.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); span.click(); } });
     span.addEventListener("click", (e) => {
@@ -445,7 +466,7 @@
           let v = inp.value.trim();
           if (type === "number") {
             if (v === "") v = null;
-            else { v = Number(v.replace(",", ".")); if (Number.isNaN(v)) { D.toast("숫자를 입력하세요.", "error"); inp.replaceWith(span); return; } }
+            else { v = Number(v.replace(",", ".")); if (Number.isNaN(v)) { D.toast(T("숫자를 입력하세요."), "error"); inp.replaceWith(span); return; } }
           }
           try { await onSave(v); } catch (err) { D.fail(err); inp.replaceWith(span); }
         } else inp.replaceWith(span);
@@ -467,12 +488,12 @@
   D.settings = () => (D.project() ? D.project().settings : null);
 
   const NAV = [
-    { group: null, items: [["home", "시작", "home"]] },
-    { group: "데이터 이해", items: [["overview", "개요", "overview"], ["checks", "데이터 점검", "shield"], ["columns", "컬럼", "columns"], ["sheet", "데이터 표", "table"],
-      ["drift", "train vs test", "versus"], ["explore", "탐색", "explore"]] },
-    { group: "모델·제출", items: [["cv", "검증 설계", "layers"], ["experiments", "실험", "flask"], ["ensemble", "앙상블", "merge"],
-      ["submission", "제출 검사", "upload"]] },
-    { group: null, items: [["settings", "설정", "gear"]] },
+    { group: null, items: [["home", T("시작"), "home"]] },
+    { group: T("데이터 이해"), items: [["overview", T("개요"), "overview"], ["checks", T("데이터 점검"), "shield"], ["columns", T("컬럼"), "columns"], ["sheet", T("데이터 표"), "table"],
+      ["drift", "train vs test", "versus"], ["explore", T("탐색"), "explore"]] },
+    { group: T("모델·제출"), items: [["cv", T("검증 설계"), "layers"], ["experiments", T("실험"), "flask"], ["ensemble", T("앙상블"), "merge"],
+      ["submission", T("제출 검사"), "upload"]] },
+    { group: null, items: [["settings", T("설정"), "gear"]] },
   ];
   D.navBadges = {};
 
@@ -494,19 +515,19 @@
     const dark = document.documentElement.dataset.theme === "dark";
     const loaded = proj && proj.loaded;
 
-    const wsName = D.STATIC ? (D.STATIC.project || "보고서") : loaded ? (proj.settings.name || proj.root) : "돋보기";
-    const wsMeta = D.STATIC ? "읽기 전용 보고서" : loaded
-      ? (D.TASK_LABEL[proj.settings.task] || "과제 미정") + ", " + ((proj.metric_info && proj.metric_info.label) || proj.settings.metric || "지표 미정")
-      : "대회 데이터 분석";
+    const wsName = D.STATIC ? (D.STATIC.project || T("보고서")) : loaded ? (proj.settings.name || proj.root) : T("돋보기");
+    const wsMeta = D.STATIC ? T("읽기 전용 보고서") : loaded
+      ? (D.TASK_LABEL[proj.settings.task] || T("과제 미정")) + ", " + ((proj.metric_info && proj.metric_info.label) || proj.settings.metric || T("지표 미정"))
+      : T("대회 데이터 분석");
     sb.appendChild(h("div", { class: "ws" },
-      h("div", { class: "ws-main", role: "button", title: loaded ? proj.root : "시작 화면", onclick: () => D.go(loaded ? "settings" : "home") },
+      h("div", { class: "ws-main", role: "button", title: loaded ? proj.root : T("시작 화면"), onclick: () => D.go(loaded ? "settings" : "home") },
         h("span", { class: "brand-mark" }, D.logo()),
         h("div", { class: "ws-text" }, h("div", { class: "ws-name" }, wsName), h("div", { class: "ws-meta" }, wsMeta))),
-      h("button", { class: "icon-btn ws-collapse", title: "사이드바 닫기 (Ctrl+B)", onclick: toggleNav }, D.icon("chevrons"))));
+      h("button", { class: "icon-btn ws-collapse", title: T("사이드바 닫기 (Ctrl+B)"), onclick: toggleNav }, D.icon("chevrons"))));
 
     if (!D.STATIC) {
-      sb.appendChild(h("div", { class: "nav-item", role: "button", title: "대회 폴더 열기 (Ctrl+O)", onclick: openFolder },
-        D.icon("folder"), h("span", null, "폴더 열기"), h("kbd", { class: "nav-kbd" }, "Ctrl+O")));
+      sb.appendChild(h("div", { class: "nav-item", role: "button", title: T("대회 폴더 열기 (Ctrl+O)"), onclick: openFolder },
+        D.icon("folder"), h("span", null, T("폴더 열기")), h("kbd", { class: "nav-kbd" }, "Ctrl+O")));
     }
 
     let n = 0;
@@ -518,7 +539,7 @@
         const badge = D.navBadges[name];
         const key = ++n <= 10 ? (n % 10) : null;
         sb.appendChild(h("div", { class: "nav-item" + (cur === name ? " active" : "") + (disabled ? " disabled" : ""), role: "button",
-          title: disabled ? "대회 폴더를 먼저 여세요" : label + (key !== null ? ` (Ctrl+${key})` : ""), onclick: () => { if (!disabled) D.go(name); } },
+          title: disabled ? T("대회 폴더를 먼저 여세요") : label + (key !== null ? ` (Ctrl+${key})` : ""), onclick: () => { if (!disabled) D.go(name); } },
           D.icon(icon), h("span", null, label),
           badge ? h("span", { class: "nav-badge " + badge.kind }, badge.text) : null));
       }
@@ -535,18 +556,20 @@
       if (sizes.length) foot.appendChild(h("div", { class: "side-info num" }, D.icon("table"), h("span", null, sizes.join(", "))));
       const d = daysLeft(proj);
       if (d !== null) foot.appendChild(h("div", { class: "side-info" + (d >= 0 && d <= 3 ? " hot" : "") }, D.icon("clock"),
-        h("span", null, d >= 0 ? `마감까지 D-${d}` : "대회가 끝났습니다")));
+        h("span", null, d >= 0 ? T("마감까지 D-{0}", d) : T("대회가 끝났습니다"))));
     } else if (D.STATIC) {
-      foot.appendChild(h("div", { class: "side-info" }, D.icon("clock"), h("span", null, `${D.STATIC.created_at || ""} 기준`)));
+      foot.appendChild(h("div", { class: "side-info" }, D.icon("clock"), h("span", null, T("{0} 기준", D.STATIC.created_at || ""))));
     }
     if (D.update && D.update.newer) {
-      foot.appendChild(h("a", { class: "side-update", href: D.update.url, target: "_blank", rel: "noopener", title: "릴리스 페이지 열기" },
-        D.icon("download"), h("span", null, `새 버전 ${D.update.latest} 받기`)));
+      foot.appendChild(h("a", { class: "side-update", href: D.update.url, target: "_blank", rel: "noopener", title: T("릴리스 페이지 열기") },
+        D.icon("download"), h("span", null, T("새 버전 {0} 받기", D.update.latest))));
     }
     foot.appendChild(h("div", { class: "side-bottom" },
-      h("span", { class: "side-ver", title: D.state && !D.state.lightgbm ? "LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)" : "" },
+      h("span", { class: "side-ver", title: D.state && !D.state.lightgbm ? T("LightGBM을 설치하면 기본 모델이 더 빠릅니다 (pip install lightgbm)") : "" },
         D.state ? `v${D.state.version}, ${D.state.lightgbm ? "LightGBM" : "scikit-learn"}` : ""),
-      h("button", { class: "icon-btn", title: dark ? "밝은 테마로" : "어두운 테마로", onclick: toggleTheme }, D.icon(dark ? "sun" : "moon"))));
+      D.STATIC ? null : h("button", { class: "icon-btn lang-btn", title: D.lang === "en" ? "한국어로 보기" : "View in English",
+        "aria-label": D.lang === "en" ? "한국어" : "English", onclick: () => D.setLang(D.lang === "en" ? "ko" : "en") }, D.lang === "en" ? "한" : "EN"),
+      h("button", { class: "icon-btn", title: dark ? T("밝은 테마로") : T("어두운 테마로"), onclick: toggleTheme }, D.icon(dark ? "sun" : "moon"))));
     sb.appendChild(foot);
   }
 
@@ -556,21 +579,21 @@
     if (!top) return;
     D.clear(top);
     const proj = D.project();
-    top.appendChild(h("button", { class: "icon-btn open-nav", title: "사이드바 열기 (Ctrl+B)", onclick: toggleNav }, D.icon("menu")));
+    top.appendChild(h("button", { class: "icon-btn open-nav", title: T("사이드바 열기 (Ctrl+B)"), onclick: toggleNav }, D.icon("menu")));
     const tabs = (!D.STATIC && D.state && D.state.tabs) || [];
     if (tabs.length) {
-      const strip = h("div", { class: "tabs-strip", role: "tablist", "aria-label": "열린 대회" });
+      const strip = h("div", { class: "tabs-strip", role: "tablist", "aria-label": T("열린 대회") });
       for (const t of tabs) {
         const active = t.active && (name !== "home" || t.error);  // 열지 못한 대회는 시작 화면에서 파일을 고르므로 그 탭이 활성
         const tab = h("div", { class: "tab" + (active ? " active" : "") + (t.error ? " error" : ""), role: "tab", "aria-selected": active ? "true" : "false",
-          title: t.root + (t.error ? "\n열지 못한 폴더입니다" : ""), onclick: () => D.switchProject(t.root),
+          title: t.root + (t.error ? T("\n열지 못한 폴더입니다") : ""), onclick: () => D.switchProject(t.root),
           onauxclick: (e) => { if (e.button === 1) { e.preventDefault(); D.closeProject(t.root); } } },
         h("span", { class: "tab-logo" }, D.logo()), h("span", { class: "tab-name" }, t.name),
-        h("button", { class: "tab-x", title: "탭 닫기" + (document.body.classList.contains("desktop") ? " (Ctrl+W)" : ""), "aria-label": t.name + " 탭 닫기",
+        h("button", { class: "tab-x", title: T("탭 닫기") + (document.body.classList.contains("desktop") ? " (Ctrl+W)" : ""), "aria-label": t.name + T(" 탭 닫기"),
           onclick: (e) => { e.stopPropagation(); D.closeProject(t.root); } }, D.icon("x")));
         strip.appendChild(tab);
       }
-      strip.appendChild(h("button", { class: "tab-add", title: "대회 폴더 열기 (Ctrl+O)", "aria-label": "대회 폴더 열기", onclick: openFolder }, D.icon("plus")));
+      strip.appendChild(h("button", { class: "tab-add", title: T("대회 폴더 열기 (Ctrl+O)"), "aria-label": T("대회 폴더 열기"), onclick: openFolder }, D.icon("plus")));
       top.appendChild(strip);
       top.appendChild(h("div", { class: "tb-jobs", id: "tb-jobs" }));
       top.appendChild(h("div", { class: "win-ctl", id: "win-ctl" }));
@@ -578,8 +601,8 @@
       renderWinCtl();
       return;
     }
-    const crumbs = h("nav", { class: "crumbs", "aria-label": "위치" });
-    const projName = D.STATIC ? (D.STATIC.project || "보고서") : proj && proj.loaded ? (proj.settings.name || proj.root) : null;
+    const crumbs = h("nav", { class: "crumbs", "aria-label": T("위치") });
+    const projName = D.STATIC ? (D.STATIC.project || T("보고서")) : proj && proj.loaded ? (proj.settings.name || proj.root) : null;
     if (projName && name !== "home") {
       crumbs.appendChild(h("span", { class: "crumb", role: "button", onclick: () => D.go(D.STATIC ? "overview" : "settings") },
         h("span", { class: "crumb-logo" }, D.logo()), h("span", { class: "ellipsis" }, projName)));
@@ -587,7 +610,7 @@
     }
     crumbs.appendChild(h("span", { class: "crumb now" }, D.icon(navIcon(name)), h("span", null, page.title || navLabel(name))));
     top.appendChild(crumbs);
-    if (D.STATIC) top.appendChild(h("span", { class: "badge" }, "읽기 전용"));
+    if (D.STATIC) top.appendChild(h("span", { class: "badge" }, T("읽기 전용")));
     top.appendChild(h("span", { class: "grow" }));
     top.appendChild(h("div", { class: "tb-jobs", id: "tb-jobs" }));
     top.appendChild(h("div", { class: "win-ctl", id: "win-ctl" }));
@@ -605,10 +628,10 @@
     const dk = D.desktop();
     if (!dk || !frameless) return;
     const max = document.body.classList.contains("maximized");
-    box.appendChild(h("button", { class: "wc", title: "최소화", "aria-label": "최소화", onclick: () => dk.minimize() }, GLYPH.min));
-    box.appendChild(h("button", { class: "wc", title: max ? "이전 크기로" : "최대화", "aria-label": max ? "이전 크기로" : "최대화", onclick: toggleMax },
+    box.appendChild(h("button", { class: "wc", title: T("최소화"), "aria-label": T("최소화"), onclick: () => dk.minimize() }, GLYPH.min));
+    box.appendChild(h("button", { class: "wc", title: max ? T("이전 크기로") : T("최대화"), "aria-label": max ? T("이전 크기로") : T("최대화"), onclick: toggleMax },
       max ? GLYPH.restore : GLYPH.max));
-    box.appendChild(h("button", { class: "wc close", title: "닫기", "aria-label": "닫기", onclick: () => dk.close() }, GLYPH.close));
+    box.appendChild(h("button", { class: "wc close", title: T("닫기"), "aria-label": T("닫기"), onclick: () => dk.close() }, GLYPH.close));
   }
   async function syncMax() {
     const dk = D.desktop();
@@ -714,7 +737,7 @@
     const page = D.pages[name] || D.pages.home;
     renderChrome();
     renderTopbar(page, name);
-    document.title = (page.title ? page.title + " - " : "") + "돋보기";
+    document.title = (page.title ? page.title + " - " : "") + T("돋보기");
     syncTitle();
     const body = document.getElementById("content");
     D.clear(body);
@@ -795,7 +818,7 @@
     try {
       const r = await dk.save_download(u.searchParams.get("exp") || "", u.searchParams.get("kind") || "submission", u.searchParams.get("path") || "");
       if (r && r.error) D.toast(r.error, "error");
-      else if (r && r.path) D.toast("저장했습니다: " + r.path);
+      else if (r && r.path) D.toast(T("저장했습니다: ") + r.path);
     } catch (err) { D.fail(err); }
   });
 
@@ -808,6 +831,8 @@
     document.documentElement.dataset.theme = theme;
     try { if (localStorage.getItem("dotbogi-nav") === "collapsed") document.getElementById("app").classList.add("nav-collapsed"); } catch (e) { /* 무시 */ }
     if (D.STATIC) document.body.classList.add("static");
+    const nav = document.getElementById("sidebar");
+    if (nav) nav.setAttribute("aria-label", T("메뉴"));
     try {
       await D.refreshState();
       for (const j of (D.state.jobs || [])) {
@@ -821,6 +846,13 @@
     if (!D.STATIC) setTimeout(D.checkUpdate, 1500);
   };
 
+  /* 화면 언어 바꾸기: 저장하고 다시 그린다 (문구가 화면 곳곳에 미리 만들어져 있어 새로 불러온다) */
+  D.setLang = async function (lang) {
+    try { localStorage.setItem("dotbogi-lang", lang); } catch (e) { /* 무시 */ }
+    try { await api("/api/prefs", { body: { lang } }); } catch (e) { /* 저장 못 해도 화면은 바꾼다 */ }
+    location.reload();
+  };
+
   /* 새 버전 확인: 하루 한 번 (서버가 결과를 기억). 새 버전이면 사이드바에 표시하고 처음 한 번만 알림 */
   D.update = null;
   D.checkUpdate = async function (force) {
@@ -832,7 +864,7 @@
         let seen = null;
         try { seen = localStorage.getItem("dotbogi-update-seen"); } catch (e) { /* 무시 */ }
         if (seen !== r.latest || force) {
-          D.toast(`돋보기 ${r.latest}이(가) 나왔습니다. 사이드바 아래에서 받을 수 있습니다.`, "ok", 6000);
+          D.toast(T("돋보기 {0}이(가) 나왔습니다. 사이드바 아래에서 받을 수 있습니다.", r.latest), "ok", 6000);
           try { localStorage.setItem("dotbogi-update-seen", r.latest); } catch (e) { /* 무시 */ }
         }
       }

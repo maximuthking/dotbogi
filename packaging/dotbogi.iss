@@ -2,7 +2,7 @@
 ; 관리자 권한 없이 사용자 폴더에 설치하고, 시작 메뉴·(선택) 바탕화면 바로가기와 '앱 제거'를 등록한다.
 #define AppVersion GetEnv("DOTBOGI_VERSION")
 #if AppVersion == ""
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 
 [Setup]

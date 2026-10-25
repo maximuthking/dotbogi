@@ -30,7 +30,18 @@ def static_key(path: str, params: dict | None = None) -> str:
     return path + json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 
-def build_report(app, out_path: Path | None = None, job=None, run_adversarial: bool = False) -> dict:
+def build_report(app, out_path: Path | None = None, job=None, run_adversarial: bool = False,
+                 lang: str | None = None) -> dict:
+    from . import i18n
+    prev = i18n.current()
+    i18n.set_lang(lang or prev)  # 작업 스레드에서도 코드 조각 주석 등이 보고서 언어로
+    try:
+        return _build_report(app, out_path, job, run_adversarial, lang)
+    finally:
+        i18n.set_lang(prev)
+
+
+def _build_report(app, out_path, job, run_adversarial, lang) -> dict:
     prog = _Progress(job)
     p = app.require()
     out_path = Path(out_path) if out_path else p.dir / f"report-{time.strftime('%Y%m%d-%H%M')}.html"
@@ -75,7 +86,10 @@ def build_report(app, out_path: Path | None = None, job=None, run_adversarial: b
         res[static_key("/api/experiment", {"id": e["id"]})] = app.experiment_detail(e["id"])
 
     payload = {"created_at": time.strftime("%Y-%m-%d %H:%M"), "project": p.settings["name"], "pages": pages,
-               "responses": jsonable(res)}
+               "responses": jsonable(res), "lang": lang or "ko"}
+    if lang == "en":
+        from . import i18n
+        payload["responses"] = i18n.translate(payload["responses"], "en")
     html = _assemble(payload)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
@@ -112,7 +126,9 @@ def _assemble(payload: dict) -> str:
         code = (STATIC / src).read_text(encoding="utf-8")
         parts.append(f"<script>/* {src} */\n{_safe_script(code)}\n</script>")
     html = html[: m.start()] + "\n".join(parts) + html[m.end():]
-    html = html.replace("<title>돋보기</title>", f"<title>돋보기 보고서 · {_esc(payload['project'])}</title>")
+    title = "Dotbogi report" if payload.get("lang") == "en" else "돋보기 보고서"
+    html = html.replace("<title>돋보기</title>", f"<title>{title} · {_esc(payload['project'])}</title>")
+    html = html.replace('<html lang="ko">', f'<html lang="{payload.get("lang") or "ko"}">')
     return html
 
 

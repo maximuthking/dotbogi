@@ -51,7 +51,7 @@ packages = ["dotbogi", "dotbogi.analysis"]
 version = { attr = "dotbogi.__version__" }
 
 [tool.setuptools.package-data]
-dotbogi = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/js/pages/*.js", "static/vendor/*", "static/img/*"]
+dotbogi = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/js/pages/*.js", "static/vendor/*", "static/img/*", "static/i18n/*", "i18n_en.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

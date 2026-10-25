@@ -6,9 +6,9 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 PKG = ROOT / "dotbogi"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-datas = [(str(PKG / "static"), "dotbogi/static")]
+datas = [(str(PKG / "static"), "dotbogi/static"), (str(PKG / "i18n_en.json"), "dotbogi")]
 datas += collect_data_files("webview")
 hiddenimports = collect_submodules("dotbogi") + collect_submodules("webview.platforms")
 

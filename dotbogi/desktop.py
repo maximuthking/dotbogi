@@ -292,7 +292,20 @@ def start_engine(folder: str | None, port: int) -> tuple[subprocess.Popen, dict]
 
 
 LOADING_HTML = """<!doctype html><meta charset="utf-8"><body style="margin:0;height:100vh;display:grid;place-items:center;
-background:{bg};color:{fg};font:14px 'Segoe UI','Malgun Gothic',sans-serif"><div>돋보기를 여는 중…</div></body>"""
+background:{bg};color:{fg};font:14px 'Segoe UI','Malgun Gothic',sans-serif"><div>{text}</div></body>"""
+
+
+def _ui_lang() -> str:
+    """화면 언어: 앱 설정 → 없으면 운영체제 언어 (창이 뜨기 전 문구용)"""
+    try:
+        from .api import load_prefs
+        lang = load_prefs().get("lang")
+        if lang in ("ko", "en"):
+            return lang
+    except Exception:
+        pass
+    import locale
+    return "ko" if str(locale.getlocale()[0] or "").lower().startswith(("ko", "korean")) else "en"
 
 
 def main(folder: str | None = None, port: int = 8765) -> int:
@@ -305,7 +318,9 @@ def main(folder: str | None = None, port: int = 8765) -> int:
     dark = _system_dark()
     bridge = Bridge()
     win = webview.create_window(
-        "돋보기", html=LOADING_HTML.format(bg="#191919" if dark else "#FFFFFF", fg="#9b9b9b" if dark else "#787774"),
+        "돋보기" if _ui_lang() == "ko" else "Dotbogi",
+        html=LOADING_HTML.format(bg="#191919" if dark else "#FFFFFF", fg="#9b9b9b" if dark else "#787774",
+                                 text="돋보기를 여는 중…" if _ui_lang() == "ko" else "Opening Dotbogi…"),
         js_api=bridge, width=1440, height=920, min_size=(900, 600), text_select=True,
         background_color="#191919" if dark else "#FFFFFF")
     bridge._window = win

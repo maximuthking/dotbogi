@@ -4,14 +4,15 @@
 (function () {
   "use strict";
   const D = window.D;
+  const T = D.t;
   const h = D.h;
   const f = D.fmt;
   const RH = 28;            // 행 높이(px)
   const CHUNK = 200;        // 한 번에 가져오는 행 수
   const MAXH = 15e6;        // 브라우저 요소 높이 한계 아래로 (이보다 길면 스크롤 위치를 비율로 바꿔 씀)
   const RN = 64;            // 행 번호 칸 폭
-  const OPS = [["==", "="], ["!=", "≠"], [">", ">"], [">=", "≥"], ["<", "<"], ["<=", "≤"], ["contains", "포함"],
-    ["isnull", "비어 있음"], ["notnull", "값 있음"]];
+  const OPS = [["==", "="], ["!=", "≠"], [">", ">"], [">=", "≥"], ["<", "<"], ["<=", "≤"], ["contains", T("포함")],
+    ["isnull", T("비어 있음")], ["notnull", T("값 있음")]];
   const OPL = Object.fromEntries(OPS);
   const W_KIND = { numeric: 104, binary: 84, datetime: 156, text: 260, categorical: 140, id: 116, constant: 96, pred: 132 };
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -24,8 +25,8 @@
   }
 
   D.pages.sheet = {
-    title: "데이터 표",
-    subtitle: "모든 행을 스프레드시트처럼 봅니다. 정렬·검색·필터, 실험의 예측과 오차를 옆에 붙여 볼 수 있습니다",
+    title: T("데이터 표"),
+    subtitle: T("모든 행을 스프레드시트처럼 봅니다. 정렬·검색·필터, 실험의 예측과 오차를 옆에 붙여 볼 수 있습니다"),
     async render(root, params, ctx) {
       const proj = D.project();
       const st = {
@@ -36,20 +37,20 @@
 
       // ── 도구 줄
       const sources = [["train", "train"], ...(proj.shapes.test ? [["test", "test"]] : []),
-        ...(proj.shapes.sample_submission ? [["sample_submission", "제출 양식"]] : [])];
+        ...(proj.shapes.sample_submission ? [["sample_submission", T("제출 양식")]] : [])];
       const seg = D.seg(sources, st.which, (v) => { st.which = v; st.exp = v === "train" ? st.exp : ""; expSel.disabled = v !== "train"; if (v !== "train") expSel.value = ""; st.filters = []; st.sort = null; renderChips(); query(); });
-      const expSel = h("select", { class: "select sm", title: "실험의 OOF 예측과 오차를 train 옆에 붙입니다", disabled: st.which !== "train",
-        onchange: () => { st.exp = expSel.value; query(true); } }, h("option", { value: "" }, "예측 붙이지 않음"));
+      const expSel = h("select", { class: "select sm", title: T("실험의 OOF 예측과 오차를 train 옆에 붙입니다"), disabled: st.which !== "train",
+        onchange: () => { st.exp = expSel.value; query(true); } }, h("option", { value: "" }, T("예측 붙이지 않음")));
       D.api("/api/experiments").then((r) => {
         for (const e of r.experiments || []) if (e.has_oof) expSel.appendChild(h("option", { value: e.id, selected: e.id === st.exp }, `${e.name}${e.cv != null ? " · CV " + f.score(e.cv) : ""}`));
-        if (expSel.options.length === 1) expSel.title = "OOF가 있는 실험이 아직 없습니다";
+        if (expSel.options.length === 1) expSel.title = T("OOF가 있는 실험이 아직 없습니다");
       }).catch(() => {});
-      const search = h("input", { class: "input sm sheet-search", placeholder: "모든 열에서 찾기", value: st.search, "aria-label": "모든 열에서 찾기" });
+      const search = h("input", { class: "input sm sheet-search", placeholder: T("모든 열에서 찾기"), value: st.search, "aria-label": T("모든 열에서 찾기") });
       let searchT = 0;
       search.addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(() => { st.search = search.value.trim(); query(); }, 350); });
-      const filterBtn = h("button", { class: "btn sm", onclick: (e) => openFilter(e.currentTarget) }, D.icon("filter"), "필터");
-      const colBtn = h("button", { class: "btn sm", onclick: (e) => openColumns(e.currentTarget) }, D.icon("columns"), "컬럼");
-      const exportBtn = h("button", { class: "btn sm", title: "지금 보이는 결과(필터·정렬·보이는 열)를 CSV로", onclick: () => D.busy(exportBtn, exportCsv) }, D.icon("download"), "CSV 내보내기");
+      const filterBtn = h("button", { class: "btn sm", onclick: (e) => openFilter(e.currentTarget) }, D.icon("filter"), T("필터"));
+      const colBtn = h("button", { class: "btn sm", onclick: (e) => openColumns(e.currentTarget) }, D.icon("columns"), T("컬럼"));
+      const exportBtn = h("button", { class: "btn sm", title: T("지금 보이는 결과(필터·정렬·보이는 열)를 CSV로"), onclick: () => D.busy(exportBtn, exportCsv) }, D.icon("download"), T("CSV 내보내기"));
       const chips = h("div", { class: "row sheet-chips" });
 
       // ── 표
@@ -57,7 +58,7 @@
       const thead = h("thead");
       const tbody = h("tbody");
       const table = h("table", { class: "sheet" }, colgroup, thead, tbody);
-      const scroller = h("div", { class: "sheet-scroll", tabindex: "0", role: "grid", "aria-label": "데이터 표" }, table);
+      const scroller = h("div", { class: "sheet-scroll", tabindex: "0", role: "grid", "aria-label": T("데이터 표") }, table);
       const cellRef = h("span", { class: "sheet-ref" });
       const cellVal = h("span", { class: "sheet-val" });
       const status = h("span", { class: "sheet-status num" });
@@ -78,8 +79,10 @@
       const body = (offset, limit) => ({ which: st.which, exp: st.exp || null, search: st.search, filters: st.filters, sort: st.sort, asc: st.asc, offset, limit });
       async function query(fromExp) {
         const qv = ++st.qv;
+        const justAdded = st.justAdded;
+        st.justAdded = false;
         st.chunks.clear(); st.pending.clear(); st.sel = null;
-        status.textContent = "불러오는 중…";
+        status.textContent = T("불러오는 중…");
         try {
           const r = await D.api("/api/sheet", { body: body(0, CHUNK) });
           if (qv !== st.qv || !alive()) return;
@@ -89,10 +92,10 @@
           if (st.cols.map((c) => c.name).join("|") !== prevNames) layoutColumns(fromExp);
           scroller.scrollTop = 0;
           renderHead(); fit(); updateStatus();
-          if (fromExp && st.exp) D.toast("오차 열의 머리글을 누르면 가장 크게 틀린 행부터 볼 수 있습니다.", "ok", 4500);
+          if (fromExp && st.exp) D.toast(T("오차 열의 머리글을 누르면 가장 크게 틀린 행부터 볼 수 있습니다."), "ok", 4500);
         } catch (e) {
           if (qv !== st.qv) return;
-          if (st.filters.length && /비교|숫자/.test(e.message)) { st.filters.pop(); renderChips(); }
+          if (justAdded && st.filters.length) { st.filters.pop(); renderChips(); }  // 방금 넣은 필터가 잘못됐으면 되돌림
           D.fail(e); status.textContent = "";
         }
       }
@@ -132,11 +135,11 @@
           const c = st.cols[ci];
           const sorted = st.sort === c.name;
           const th = h("th", { class: (c.numeric ? "num " : "") + (c.extra ? "extra " : "") + (sorted ? "sorted" : ""), "data-ci": ci,
-            title: c.name + (c.role === "target" ? " (타깃)" : c.role === "id" ? " (ID)" : "") + "\n누르면 정렬 (오름 → 내림 → 원래 순서)" },
+            title: c.name + (c.role === "target" ? T(" (타깃)") : c.role === "id" ? " (ID)" : "") + T("\n누르면 정렬 (오름 → 내림 → 원래 순서)") },
           h("span", { class: "th-name" }, c.name),
-          c.role === "target" ? h("span", { class: "badge primary" }, "타깃") : c.extra ? h("span", { class: "badge ok" }, "예측") : null,
+          c.role === "target" ? h("span", { class: "badge primary" }, T("타깃")) : c.extra ? h("span", { class: "badge ok" }, T("예측")) : null,
           sorted ? h("span", { class: "arrow" }, st.asc ? "▲" : "▼") : null,
-          h("span", { class: "rz", title: "끌어서 폭 바꾸기", onmousedown: (e) => startResize(e, c.name) }));
+          h("span", { class: "rz", title: T("끌어서 폭 바꾸기"), onmousedown: (e) => startResize(e, c.name) }));
           th.addEventListener("click", (e) => { if (e.target.classList.contains("rz")) return; cycleSort(c.name); });
           tr.appendChild(th);
         }
@@ -232,7 +235,7 @@
         const mv = { ArrowDown: [1, 0], ArrowUp: [-1, 0], ArrowRight: [0, 1], ArrowLeft: [0, -1], PageDown: [page, 0], PageUp: [-page, 0] }[e.key];
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
           const v = selValue();
-          if (v !== undefined) { navigator.clipboard.writeText(v === null ? "" : v).then(() => D.toast("셀 값을 복사했습니다.")).catch(() => {}); }
+          if (v !== undefined) { navigator.clipboard.writeText(v === null ? "" : v).then(() => D.toast(T("셀 값을 복사했습니다."))).catch(() => {}); }
           e.preventDefault(); return;
         }
         if (!mv) return;
@@ -261,20 +264,20 @@
         return fmtCell(r.row[visible()[st.sel.c]]);
       }
       function updateFoot() {
-        if (!st.sel) { cellRef.textContent = ""; cellVal.textContent = "셀을 누르면 전체 값이 여기에 나옵니다. 화살표로 움직이고 Ctrl+C로 복사합니다."; cellVal.classList.add("faint"); return; }
+        if (!st.sel) { cellRef.textContent = ""; cellVal.textContent = T("셀을 누르면 전체 값이 여기에 나옵니다. 화살표로 움직이고 Ctrl+C로 복사합니다."); cellVal.classList.add("faint"); return; }
         const r = rowAt(st.sel.r);
         const col = st.cols[visible()[st.sel.c]];
-        cellRef.textContent = `${r ? f.int(r.pos + 1) + "행" : ""} · ${col ? col.name : ""}`;
+        cellRef.textContent = `${r ? f.int(r.pos + 1) + T("행") : ""} · ${col ? col.name : ""}`;
         const v = selValue();
         cellVal.classList.toggle("faint", v === null || v === undefined);
-        cellVal.textContent = v === undefined ? "불러오는 중…" : v === null ? "비어 있음" : v;
+        cellVal.textContent = v === undefined ? T("불러오는 중…") : v === null ? T("비어 있음") : v;
         cellVal.title = v || "";
       }
       function updateStatus() {
-        const parts = [st.matched === st.total ? `${f.int(st.total)}행` : `${f.int(st.total)}행 중 ${f.int(st.matched)}행`];
+        const parts = [st.matched === st.total ? T("{0}행", f.int(st.total)) : T("{0}행 중 {1}행", f.int(st.total), f.int(st.matched))];
         const nVis = visible().length;
-        parts.push(nVis === st.cols.length ? `열 ${st.cols.length}개` : `열 ${st.cols.length}개 중 ${nVis}개`);
-        if (st.sort) parts.push(`정렬 ${st.sort} ${st.asc ? "▲" : "▼"}`);
+        parts.push(nVis === st.cols.length ? T("열 {0}개", st.cols.length) : T("열 {0}개 중 {1}개", st.cols.length, nVis));
+        if (st.sort) parts.push(T("정렬 {0} {1}", st.sort, st.asc ? "▲" : "▼"));
         status.textContent = parts.join(" · ");
       }
 
@@ -310,19 +313,20 @@
         const names = st.order.map((i) => st.cols[i].name);
         const col = D.select(names.map((n) => [n, n]), st.sel ? st.cols[visible()[st.sel.c]].name : names[0], null, { class: "sm" });
         const op = D.select(OPS, "==", () => { val.disabled = ["isnull", "notnull"].includes(op.value); }, { class: "sm" });
-        const val = h("input", { class: "input sm", placeholder: "값", style: { width: "150px" } });
+        const val = h("input", { class: "input sm", placeholder: T("값"), style: { width: "150px" } });
         const add = h("button", { class: "btn primary sm", onclick: () => {
           const needs = !["isnull", "notnull"].includes(op.value);
-          if (needs && !val.value.trim()) { D.toast("비교할 값을 적으세요.", "error"); return; }
+          if (needs && !val.value.trim()) { D.toast(T("비교할 값을 적으세요."), "error"); return; }
           st.filters.push({ col: col.value, op: op.value, value: val.value.trim() });
+          st.justAdded = true;
           pop.close(); renderChips(); query();
-        } }, "추가");
+        } }, T("추가"));
         val.addEventListener("keydown", (e) => { if (e.key === "Enter") add.click(); });
-        const pop = popover(anchor, h("div", { class: "col" }, h("b", null, "조건 필터"), h("div", { class: "row", style: { flexWrap: "nowrap" } }, col, op, val, add)));
+        const pop = popover(anchor, h("div", { class: "col" }, h("b", null, T("조건 필터")), h("div", { class: "row", style: { flexWrap: "nowrap" } }, col, op, val, add)));
         val.focus();
       }
       function openColumns(anchor) {
-        const q = h("input", { class: "input sm", placeholder: "컬럼 이름으로 찾기" });
+        const q = h("input", { class: "input sm", placeholder: T("컬럼 이름으로 찾기") });
         const list = h("div", { class: "pop-list" });
         const fill = () => {
           D.clear(list);
@@ -334,21 +338,21 @@
               if (cb.checked) st.hidden.delete(c.name); else st.hidden.add(c.name);
               renderHead(); paint(); updateStatus();
             } });
-            list.appendChild(h("label", { class: "check pop-item" }, cb, h("span", { class: "ellipsis grow" }, c.name), c.extra ? h("span", { class: "badge ok" }, "예측") : D.kindBadge(c.kind)));
+            list.appendChild(h("label", { class: "check pop-item" }, cb, h("span", { class: "ellipsis grow" }, c.name), c.extra ? h("span", { class: "badge ok" }, T("예측")) : D.kindBadge(c.kind)));
           }
         };
         q.addEventListener("input", fill);
         const all = (show) => { if (show) st.hidden.clear(); else st.order.forEach((i) => st.hidden.add(st.cols[i].name)); fill(); renderHead(); paint(); updateStatus(); };
         popover(anchor, h("div", { class: "col", style: { width: "280px" } }, q,
-          h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => all(true) }, "모두 보이기"), h("button", { class: "btn sm", onclick: () => all(false) }, "모두 숨기기")), list));
+          h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => all(true) }, T("모두 보이기")), h("button", { class: "btn sm", onclick: () => all(false) }, T("모두 숨기기"))), list));
         fill(); q.focus();
       }
       function renderChips() {
         D.clear(chips);
         chips.style.display = st.filters.length ? "" : "none";
-        st.filters.forEach((fl, i) => chips.appendChild(h("span", { class: "chip on", title: "눌러서 지우기", onclick: () => { st.filters.splice(i, 1); renderChips(); query(); } },
+        st.filters.forEach((fl, i) => chips.appendChild(h("span", { class: "chip on", title: T("눌러서 지우기"), onclick: () => { st.filters.splice(i, 1); renderChips(); query(); } },
           fl.op === "isnull" || fl.op === "notnull" ? `${fl.col} ${OPL[fl.op]}` : `${fl.col} ${OPL[fl.op]} ${fl.value}`, h("span", { class: "x" }, "×"))));
-        if (st.filters.length > 1) chips.appendChild(h("button", { class: "btn ghost sm", onclick: () => { st.filters = []; renderChips(); query(); } }, "모두 지우기"));
+        if (st.filters.length > 1) chips.appendChild(h("button", { class: "btn ghost sm", onclick: () => { st.filters = []; renderChips(); query(); } }, T("모두 지우기")));
       }
 
       // ── 내보내기
@@ -357,7 +361,7 @@
         const r = await D.api("/api/sheet/export", { body: { ...body(0, 1), columns: cols } });
         const a = h("a", { href: `/api/download?path=${encodeURIComponent(r.path)}&t=${encodeURIComponent(D.token)}`, download: "" });
         document.body.appendChild(a); a.click(); a.remove();
-        D.toast(`${f.int(r.rows)}행 × ${r.columns}열을 CSV로 만들었습니다.`);
+        D.toast(T("{0}행 × {1}열을 CSV로 만들었습니다.", f.int(r.rows), r.columns));
       }
 
       renderChips();

@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import __version__
+from . import __version__, i18n
 from . import metrics as M
 from .analysis import gbm
 from .analysis.adversarial import run_adversarial
@@ -771,8 +771,9 @@ class App:
             raise LoadError("타깃 값이 모두 비어 있어 학습할 수 없습니다.")
         if len(np.unique(y[mask])) <= 1:
             raise LoadError("타깃 값이 하나뿐이라 학습할 수 없습니다. 개요에서 타깃이 맞는지 확인하세요.")
-        job = self.jobs.submit("baseline", "기본 모델 교차검증", self._baseline_job, p, params or {},
-                               key=json.dumps(params or {}, sort_keys=True, default=str))
+        params = {**(params or {}), "_lang": i18n.current()}
+        job = self.jobs.submit("baseline", "기본 모델 교차검증", self._baseline_job, p, params,
+                               key=json.dumps({k: v for k, v in params.items() if k != "_lang"}, sort_keys=True, default=str))
         return {"job": job.to_dict(False)}
 
     def _baseline_job(self, job, p: Project, params: dict):
@@ -869,7 +870,8 @@ class App:
                 except ValueError as ex:
                     sub, sub_note = None, f"제출 파일을 만들지 못했습니다: {ex}"
         n_prev = sum(1 for e in Ledger(p.dir).load() if e.get("source") == "baseline")
-        name = (params.get("name") or "").strip() or f"기본 모델 #{n_prev + 1}"
+        name = (params.get("name") or "").strip() or (f"Baseline #{n_prev + 1}" if params.get("_lang") == "en"
+                                                       else f"기본 모델 #{n_prev + 1}")
         notes = params.get("notes", "") or ""
         cv_value, cv_std = res["cv"], res["cv_std"]
         extra_params = {}
@@ -1247,10 +1249,11 @@ class App:
         cv = last["honest"]["score"] if last.get("honest") else last["score"]
         n_prev = sum(1 for e in led.load() if e.get("source") == "ensemble")
         used = [wt for wt in last["weights"] if wt["weight"] > 0]
-        name = (params.get("name") or "").strip() or f"앙상블 #{n_prev + 1} ({len(used)}개 모델)"
+        name = (params.get("name") or "").strip() or (
+            f"Ensemble #{n_prev + 1} ({len(used)} models)" if i18n.current() == "en" else f"앙상블 #{n_prev + 1} ({len(used)}개 모델)")
         weights_txt = ", ".join(f"{wt['name']} {wt['weight']:.0%}" for wt in used)
-        notes = ("CV는 폴드 교차로 잰 정직한 점수입니다. " if last.get("honest") else "") + f"가중치: {weights_txt}" + \
-            (f" · {note}" if note else "")
+        notes = (i18n.tr("CV는 폴드 교차로 잰 정직한 점수입니다. ") if last.get("honest") else "") + \
+            i18n.tr(f"가중치: {weights_txt}") + (f" · {i18n.tr(note)}" if note else "")  # 요청 언어로 저장
         e = led.add(name[:120], s["metric"], cv, None, source="ensemble",
                     params={"weights": last["weights"], "use_rank": last["use_rank"], "method": last["method"],
                             "in_sample_score": last["score"]},
@@ -1392,7 +1395,9 @@ class App:
         p = self.require()
         out = Path(params.get("path") or (p.dir / f"report-{time.strftime('%Y%m%d-%H%M')}.html"))
         pinned = self._for(p)
-        job = self.jobs.submit("report", "보고서 만들기", lambda job: build_report(pinned, out, job), project=str(p.root))
+        lang = i18n.current()
+        job = self.jobs.submit("report", "보고서 만들기", lambda job: build_report(pinned, out, job, lang=lang),
+                               project=str(p.root))
         return {"job": job.to_dict(False)}
 
     # ═════════════════════════════════════════ 제출 파일
@@ -1924,12 +1929,12 @@ def _fold_snippet(p: Project) -> str:
         lines += ["for k in sorted(train.loc[train.fold >= 0, 'fold'].unique()):",
                   "    trn, val = train[(train.fold != k) & (train.fold >= 0)], train[train.fold == k]",
                   "    ..."]
-    return "\n".join(lines)
+    return "\n".join(i18n.tr(line) for line in lines)  # 주석은 요청 언어로
 
 
 def _log_snippet(p: Project) -> str:
     root = str(p.root).replace("\\", "/")
-    return "\n".join([
+    return "\n".join(i18n.tr(line) for line in [  # 주석은 요청 언어로
         "import dotbogi",
         "",
         "# 학습 스크립트 끝에서 한 줄로 기록 (oof: train 행 순서의 예측, test_pred: test 행 순서의 예측)",
